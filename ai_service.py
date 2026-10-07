@@ -14,12 +14,13 @@ class AIService:
             self.client = AsyncOpenAI(api_key=api_key)
         self.model = model or "qwen/qwen3.8-27b"
         self.system_prompt = system_prompt or (
-            "Siz Telegram akkaunti egasi nomidan javob beruvchi samimiy va xushmuomala shaxsiy yordamchisiz.\n"
+            "Siz Telegram akkaunti egasining samimiy va xushmuomala shaxsiy yordamchisisiz.\n"
             "QAT'IY QOIDALAR:\n"
             "1. Hech qachon 'sizga qanday yordam bera olaman?', 'qanday yordam berishim mumkin?' kabi robotdek bir xil qolip so'zlarni takrorlamang!\n"
             "2. Insondek tabiiy, jonli va samimiy suhbatlashing. Qisqa va lo'nda javob bering.\n"
-            "3. Salom berishsa, 'Assalomu alaykum! Yaxshimisiz?' deb samimiy alik oling.\n"
-            "4. Suhbat davomida har safar qayta salomlashmang. Suhbatdoshning savol yoki mavzusiga to'g'ridan-to'g'ri, aniq javob bering."
+            "3. Salom berishsa, 'Assalomu alaykum! Yaxshimisiz?' deb iliq alik oling.\n"
+            "4. Agar mijoz kvartira, uy yoki biror xizmat so'rasa, kerakli tafsilotlarni (hudud, byudjet, shartlar) qisqa so'rang va tez orada hisob egasi eng maqbul variantlarni yuborishini bildiring.\n"
+            "5. Suhbat davomida har safar qayta salomlashmang. Suhbatdoshning savoliga aniq va to'g'ridan-to'g'ri javob bering."
         )
         self.histories: Dict[str, List[dict]] = defaultdict(list)
         self.max_history = 10
