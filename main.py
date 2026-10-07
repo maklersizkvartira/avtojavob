@@ -20,7 +20,8 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
+AI_BASE_URL = os.getenv("AI_BASE_URL")
+AI_MODEL = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "")
 
 if not BOT_TOKEN:
@@ -34,7 +35,12 @@ logging.basicConfig(
 logger = logging.getLogger("telegram_business_bot")
 
 # AI servisini ishga tushirish
-ai_service = AIService(api_key=OPENAI_API_KEY, model=AI_MODEL, system_prompt=SYSTEM_PROMPT)
+ai_service = AIService(
+    api_key=OPENAI_API_KEY,
+    model=AI_MODEL,
+    base_url=AI_BASE_URL if AI_BASE_URL else None,
+    system_prompt=SYSTEM_PROMPT
+)
 
 # Telegram Bot va Dispatcher
 bot = Bot(token=BOT_TOKEN)

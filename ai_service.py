@@ -7,8 +7,11 @@ from openai import AsyncOpenAI
 logger = logging.getLogger(__name__)
 
 class AIService:
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini", system_prompt: str = ""):
-        self.client = AsyncOpenAI(api_key=api_key)
+    def __init__(self, api_key: str, model: str = "openai/gpt-oss-120b", base_url: str = None, system_prompt: str = ""):
+        if base_url:
+            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        else:
+            self.client = AsyncOpenAI(api_key=api_key)
         self.model = model
         self.system_prompt = system_prompt or (
             "Siz do'stona, xushmuomala shaxsiy yordamchisiz. "
