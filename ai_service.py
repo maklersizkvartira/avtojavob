@@ -7,17 +7,20 @@ from openai import AsyncOpenAI
 logger = logging.getLogger(__name__)
 
 class AIService:
-    def __init__(self, api_key: str, model: str = "openai/gpt-oss-120b", base_url: str = None, system_prompt: str = ""):
+    def __init__(self, api_key: str, model: str = "qwen/qwen3.8-27b", base_url: str = None, system_prompt: str = ""):
         if base_url:
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         else:
             self.client = AsyncOpenAI(api_key=api_key)
-        self.model = model
+        self.model = model or "qwen/qwen3.8-27b"
         self.system_prompt = system_prompt or (
-            "Siz do'stona, xushmuomala shaxsiy yordamchisiz. "
-            "Telegram hisob egasi nomidan xushmuomalalik bilan qisqa va lo'nda javob bering."
+            "Siz Telegram akkaunti egasi nomidan javob beruvchi samimiy va xushmuomala shaxsiy yordamchisiz.\n"
+            "QAT'IY QOIDALAR:\n"
+            "1. Hech qachon 'sizga qanday yordam bera olaman?', 'qanday yordam berishim mumkin?' kabi robotdek bir xil qolip so'zlarni takrorlamang!\n"
+            "2. Insondek tabiiy, jonli va samimiy suhbatlashing. Qisqa va lo'nda javob bering.\n"
+            "3. Salom berishsa, 'Assalomu alaykum! Yaxshimisiz?' deb samimiy alik oling.\n"
+            "4. Suhbat davomida har safar qayta salomlashmang. Suhbatdoshning savol yoki mavzusiga to'g'ridan-to'g'ri, aniq javob bering."
         )
-        # Suhbat tarixini saqlash: key -> chat_id yoki (connection_id, chat_id)
         self.histories: Dict[str, List[dict]] = defaultdict(list)
         self.max_history = 10
 
@@ -32,7 +35,7 @@ class AIService:
 
     async def get_reply(self, chat_key: str, user_message: str, sender_name: str = "") -> str:
         """
-        OpenAI orqali matnga aqlli javob oladi.
+        OpenAI/Groq orqali matnga aqlli javob oladi.
         """
         self._add_to_history(chat_key, "user", user_message)
 
@@ -44,6 +47,8 @@ class AIService:
                 model=self.model,
                 messages=messages,
                 temperature=0.7,
+                frequency_penalty=0.4,
+                presence_penalty=0.4,
                 max_tokens=600,
             )
             reply = response.choices[0].message.content.strip()
