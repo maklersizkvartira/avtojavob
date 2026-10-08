@@ -9,12 +9,15 @@ from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     BusinessConnection,
     BusinessMessagesDeleted,
-    Message,
-    InlineKeyboardMarkup,
+    CallbackQuery,
     InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
 )
 from aiogram.enums import ChatAction
 
@@ -26,9 +29,9 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 AI_BASE_URL = os.getenv("AI_BASE_URL")
-AI_MODEL = os.getenv("AI_MODEL", "qwen/qwen3.8-27b")
+AI_MODEL = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "")
-OWNER_ID = os.getenv("OWNER_ID")  # Ixtiyoriy, agar .env da ko'rsatilsa
+OWNER_ID = os.getenv("OWNER_ID")
 
 if not BOT_TOKEN:
     print("XATO: BOT_TOKEN ko'rsatilmagan! .env faylini tekshiring.")
@@ -48,78 +51,117 @@ ai_service = AIService(
     system_prompt=SYSTEM_PROMPT
 )
 
-# Telegram Bot va Dispatcher
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Ulanishlarni faylda saqlash (qayta ishga tushganda o'chib ketmasligi uchun)
-CONNECTIONS_FILE = "connections.json"
+# Ma'lumotlarni doimiy saqlash fayli
+DATA_FILE = "bot_data.json"
 
-def load_connections() -> dict:
-    if os.path.exists(CONNECTIONS_FILE):
+def load_data() -> dict:
+    if os.path.exists(DATA_FILE):
         try:
-            with open(CONNECTIONS_FILE, "r", encoding="utf-8") as f:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            logger.warning(f"Connections faylini o'qishda xatolik: {e}")
-            return {}
-    return {}
+            logger.warning(f"Ma'lumotlar faylini o'qishda xatolik: {e}")
+    return {"connections": {}, "admins": [], "dialog_map": {}}
 
-def save_connections(data: dict):
+def save_data(data: dict):
     try:
-        with open(CONNECTIONS_FILE, "w", encoding="utf-8") as f:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logger.error(f"Connections faylini saqlashda xatolik: {e}")
+        logger.error(f"Ma'lumotlar faylini saqlashda xatolik: {e}")
 
-# Faol biznes ulanishlar
-business_connections: dict = load_connections()
+bot_data = load_data()
+
+# Xotiradagi xabarlar xaritasi (notification_msg_id -> client info)
+notification_map: dict[int, dict] = {}
 
 
-async def send_owner_notification(owner_chat_id: int, sender, user_msg: str, bot_reply: str):
+class AdminReplyState(StatesGroup):
+    waiting_for_reply = State()
+
+
+# ==========================================
+# YORDAMCHI FUNKSIYALAR
+# ==========================================
+
+def get_all_target_admins() -> set[int]:
+    """Barcha bildirishnoma oluvchi adminlar va hisob egalari ID lari ro'yxatini qaytaradi."""
+    targets = set(bot_data.get("admins", []))
+    if OWNER_ID:
+        try:
+            targets.add(int(OWNER_ID))
+        except ValueError:
+            pass
+    for conn in bot_data.get("connections", {}).values():
+        if conn.get("owner_chat_id"):
+            targets.add(int(conn["owner_chat_id"]))
+        elif conn.get("owner_id"):
+            targets.add(int(conn["owner_id"]))
+    return targets
+
+
+async def notify_admins(sender, user_msg: str, bot_reply: str, conn_id: str, client_chat_id: int):
     """
-    Bot avtojavob berganda, hisob egasiga kim yozgani va nima deb javob berilgani haqida xabarnoma yuboradi.
+    Hisob egasiga (adminlarga) mijozning xabari haqida to'liq hisobot yuboradi
+    va unga javob yozish imkoniyatini taqdim etadi.
     """
-    try:
-        username_str = f"@{sender.username}" if sender.username else "Mavjud emas"
-        if sender.username:
-            user_url = f"https://t.me/{sender.username}"
-            profile_html = f'<a href="{user_url}">@{sender.username}</a>'
-        else:
-            user_url = None
-            profile_html = f'<a href="tg://user?id={sender.id}">{html.escape(sender.full_name)}</a>'
+    targets = get_all_target_admins()
+    if not targets:
+        logger.warning("Ogohlantirish yuborish uchun birorta ham admin topilmadi! Iltimos, botga /start bosing.")
+        return
 
-        now_str = datetime.now().strftime("%H:%M:%S, %d.%m.%Y")
+    username_str = f"@{sender.username}" if sender.username else "Mavjud emas"
+    if sender.username:
+        user_url = f"https://t.me/{sender.username}"
+        profile_html = f'<a href="{user_url}">@{sender.username}</a> ({html.escape(sender.full_name)})'
+    else:
+        user_url = None
+        profile_html = f'<a href="tg://user?id={sender.id}">{html.escape(sender.full_name)}</a>'
 
-        notify_text = (
-            "🔔 <b>Yangi Mijozga Avtojavob Berildi!</b>\n\n"
-            f"👤 <b>Mijoz:</b> {html.escape(sender.full_name)}\n"
-            f"🔗 <b>Username:</b> {profile_html}\n"
-            f"🆔 <b>ID:</b> <code>{sender.id}</code>\n\n"
-            f"💬 <b>Mijoz yozgan xabar:</b>\n"
-            f"<blockquote>{html.escape(user_msg)}</blockquote>\n\n"
-            f"🤖 <b>AI bergan javob:</b>\n"
-            f"<blockquote>{html.escape(bot_reply)}</blockquote>\n\n"
-            f"⏰ <b>Vaqt:</b> {now_str}"
-        )
+    now_str = datetime.now().strftime("%H:%M:%S")
 
-        reply_markup = None
-        if user_url:
-            reply_markup = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="💬 Mijoz profilini ochish", url=user_url)]
-                ]
+    notify_text = (
+        "🔔 <b>DIQQAT! YANGI MUROJAAT KELDI!</b>\n\n"
+        f"👤 <b>Foydalanuvchi:</b> {profile_html}\n"
+        f"🆔 <b>ID:</b> <code>{sender.id}</code>\n\n"
+        f"💬 <b>U shunday demoqda:</b>\n"
+        f"<blockquote>{html.escape(user_msg)}</blockquote>\n\n"
+        f"🤖 <b>AI bergan dastlabki javob:</b>\n"
+        f"<blockquote>{html.escape(bot_reply)}</blockquote>\n\n"
+        "👉 <b>Iltimos, javob bering!</b>\n"
+        "<i>Siz ushbu xabarga to'g'ridan-to'g'ri 'Reply' (Javob berish) qilib yozsangiz yoki quyidagi tugmani bossangiz, "
+        "javobingiz mijozga yetkaziladi!</i>"
+    )
+
+    buttons = [
+        [InlineKeyboardButton(text="✍️ Bot orqali javob yozish", callback_data=f"rep_{sender.id}")]
+    ]
+    if user_url:
+        buttons.append([InlineKeyboardButton(text="💬 Mijoz profilini ochish", url=user_url)])
+
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    for admin_id in targets:
+        try:
+            sent_msg = await bot.send_message(
+                chat_id=admin_id,
+                text=notify_text,
+                parse_mode="HTML",
+                reply_markup=reply_markup
             )
-
-        await bot.send_message(
-            chat_id=owner_chat_id,
-            text=notify_text,
-            parse_mode="HTML",
-            reply_markup=reply_markup
-        )
-        logger.info(f"Akkaunt egasiga ({owner_chat_id}) xabarnoma yetkazildi.")
-    except Exception as e:
-        logger.error(f"Akkaunt egasiga xabarnoma yuborishda xatolik: {e}")
+            # Reply qilinganda topish uchun xotirada saqlaymiz
+            notification_map[sent_msg.message_id] = {
+                "conn_id": conn_id,
+                "client_chat_id": client_chat_id,
+                "client_id": sender.id,
+                "client_name": sender.full_name,
+            }
+            logger.info(f"Adminga ({admin_id}) xabarnoma yetkazildi. MsgID: {sent_msg.message_id}")
+        except Exception as e:
+            logger.error(f"Adminga ({admin_id}) xabar yuborishda xatolik: {e}")
 
 
 # ==========================================
@@ -133,47 +175,54 @@ async def on_business_connection(connection: BusinessConnection):
     """
     user = connection.user
     conn_id = connection.id
+    conns = bot_data.setdefault("connections", {})
+
     if connection.is_enabled:
-        business_connections[conn_id] = {
+        conns[conn_id] = {
             "owner_id": user.id,
             "owner_chat_id": connection.user_chat_id,
             "owner_name": user.full_name,
             "owner_username": user.username,
         }
-        save_connections(business_connections)
-        logger.info(
-            f"✅ Yangi biznes ulanish! Foydalanuvchi: {user.full_name} (@{user.username}, id: {user.id}) | "
-            f"Connection ID: {conn_id} | Chat ID: {connection.user_chat_id}"
-        )
+        # Adminlar ro'yxatiga ham qo'shib qo'yamiz
+        admins = bot_data.setdefault("admins", [])
+        if user.id not in admins:
+            admins.append(user.id)
+
+        save_data(bot_data)
+        logger.info(f"✅ Yangi biznes ulanish! {user.full_name} (ID: {user.id}) | ConnID: {conn_id}")
+
+        # Egasiga tabrik xabari
+        try:
+            await bot.send_message(
+                chat_id=user.id,
+                text="🎉 <b>Bot muvaffaqiyatli ulandi!</b>\n\n"
+                     "Endi shaxsiy hisobingizga kimdir yozsa, AI sizning nomingizdan samimiy javob qaytaradi va "
+                     "shu yerga darhol kim yozgani haqida to'liq hisobot keladi!",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
     else:
-        business_connections.pop(conn_id, None)
-        save_connections(business_connections)
-        logger.info(
-            f"❌ Biznes ulanish o'chirildi! Foydalanuvchi: {user.full_name} (@{user.username}, id: {user.id})"
-        )
+        conns.pop(conn_id, None)
+        save_data(bot_data)
+        logger.info(f"❌ Biznes ulanish o'chirildi! Foydalanuvchi: {user.full_name}")
 
 
 @dp.business_message(F.text)
 async def on_business_message(message: Message):
     """
-    Telegram Business hisobiga shaxsiy chatlarda kelgan xabarlarga avtomatik AI javob qaytarish.
+    Telegram Business hisobiga kelgan xabarlarni qayta ishlash.
     """
     conn_id = message.business_connection_id
     sender = message.from_user
     chat_id = message.chat.id
 
-    conn_info = business_connections.get(conn_id, {})
+    conns = bot_data.get("connections", {})
+    conn_info = conns.get(conn_id, {})
     owner_id = conn_info.get("owner_id")
-    owner_chat_id = conn_info.get("owner_chat_id")
 
-    # Agar .env da OWNER_ID ko'rsatilgan bo'lsa, zaxira sifatida ishlatamiz
-    if not owner_chat_id and OWNER_ID:
-        try:
-            owner_chat_id = int(OWNER_ID)
-        except ValueError:
-            pass
-
-    # Agar xabarni hisob egasi (o'zingiz) yozgan bo'lsa, unga javob qaytarmaymiz
+    # Agar xabarni hisob egasi (o'zingiz) yozgan bo'lsa, javob qaytarmaymiz
     if (owner_id and sender.id == owner_id) or (OWNER_ID and str(sender.id) == str(OWNER_ID)):
         logger.info(f"Akkaunt egasi ({sender.full_name}) yozdi. Avtojavob berilmadi.")
         return
@@ -182,9 +231,7 @@ async def on_business_message(message: Message):
     if sender.is_bot:
         return
 
-    logger.info(
-        f"📩 Biznes xabar keldi: '{message.text}' | Yuboruvchi: {sender.full_name} (@{sender.username}) | Chat: {chat_id}"
-    )
+    logger.info(f"📩 Biznes xabar: '{message.text}' | Yuboruvchi: {sender.full_name} | Chat: {chat_id}")
 
     # Foydalanuvchiga 'yozmoqda...' (typing) statusini ko'rsatish
     try:
@@ -196,7 +243,7 @@ async def on_business_message(message: Message):
     except Exception as e:
         logger.warning(f"Typing action yuborishda xatolik: {e}")
 
-    # OpenAI / Groq orqali aqlli javob olish
+    # AI orqali samimiy yordamchi javobini olish
     chat_key = f"biz_{conn_id}_{chat_id}"
     reply_text = await ai_service.get_reply(
         chat_key=chat_key,
@@ -211,99 +258,174 @@ async def on_business_message(message: Message):
             text=reply_text,
             business_connection_id=conn_id
         )
-        logger.info(f"📤 Avtojavob mijozga yuborildi: {reply_text[:50]}...")
+        logger.info(f"📤 Avtojavob yuborildi: {reply_text[:50]}...")
     except Exception as e:
-        logger.error(f"Xabar yuborishda xatolik: {e}")
+        logger.error(f"Mijozga xabar yuborishda xatolik: {e}")
         return
 
-    # 🔔 HISOB EGASIGA XABARNOMA YUBORISH
-    target_owner = owner_chat_id or owner_id
-    if target_owner:
-        await send_owner_notification(
-            owner_chat_id=target_owner,
-            sender=sender,
-            user_msg=message.text,
-            bot_reply=reply_text
-        )
+    # 🔔 HISOB EGASIGA DARHOL XABAR QILISH!
+    await notify_admins(
+        sender=sender,
+        user_msg=message.text,
+        bot_reply=reply_text,
+        conn_id=conn_id,
+        client_chat_id=chat_id
+    )
 
 
 @dp.deleted_business_messages()
 async def on_deleted_business_messages(event: BusinessMessagesDeleted):
-    logger.info(f"Biznes xabarlar o'chirildi: {event.message_ids} in chat {event.chat.id}")
+    logger.info(f"Biznes xabarlar o'chirildi: {event.message_ids}")
 
 
 # ==========================================
-# 2. ODDIY BOT BUYRUQLARI VA XABARLARI
+# 2. HISOB EGASI UCHUN BUYRUQ VA JAVOB QAYTARISH
+# ==========================================
+
+@dp.callback_query(F.data.startswith("rep_"))
+async def cb_start_reply(call: CallbackQuery, state: FSMContext):
+    """
+    Hisob egasi '✍️ Bot orqali javob yozish' tugmasini bosganda ishga tushadi.
+    """
+    client_id = int(call.data.replace("rep_", ""))
+    msg_id = call.message.message_id
+    info = notification_map.get(msg_id)
+
+    if not info:
+        await call.answer("Ushbu murojaat ma'lumotlari yangilangan, bevosita profilga yozing.", show_alert=True)
+        return
+
+    await state.set_state(AdminReplyState.waiting_for_reply)
+    await state.update_data(
+        conn_id=info["conn_id"],
+        client_chat_id=info["client_chat_id"],
+        client_name=info["client_name"]
+    )
+
+    await call.message.reply(
+        f"✍️ <b>{html.escape(info['client_name'])}</b> ga yubormoqchi bo'lgan javobingizni yozing:\n\n"
+        "<i>(Xabar yuborishingiz bilan u to'g'ridan-to'g'ri mijozga yetkaziladi)</i>",
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@dp.message(AdminReplyState.waiting_for_reply, F.text)
+async def process_admin_reply_state(message: Message, state: FSMContext):
+    """
+    Admin tugma orqali javob matnini yuborganida.
+    """
+    data = await state.get_data()
+    conn_id = data.get("conn_id")
+    client_chat_id = data.get("client_chat_id")
+    client_name = data.get("client_name", "Mijoz")
+
+    try:
+        await bot.send_message(
+            chat_id=client_chat_id,
+            text=message.text,
+            business_connection_id=conn_id
+        )
+        await message.reply(
+            f"✅ <b>Javobingiz {html.escape(client_name)} ga muvaffaqiyatli yetkazildi!</b>\n\n"
+            f"<i>Yuborilgan xabar:</i> «{html.escape(message.text)}»",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await message.reply(f"❌ Xabar yuborishda xatolik yuz berdi: {e}")
+
+    await state.clear()
+
+
+@dp.message(F.reply_to_message, F.text)
+async def process_admin_direct_reply(message: Message):
+    """
+    Admin to'g'ridan-to'g'ri bildirishnoma xabariga 'Reply' (Javob berish) qilib yozganda.
+    """
+    replied_msg_id = message.reply_to_message.message_id
+    info = notification_map.get(replied_msg_id)
+
+    if not info:
+        # Oddiy suhbat bo'lishi mumkin
+        return
+
+    conn_id = info["conn_id"]
+    client_chat_id = info["client_chat_id"]
+    client_name = info["client_name"]
+
+    try:
+        await bot.send_message(
+            chat_id=client_chat_id,
+            text=message.text,
+            business_connection_id=conn_id
+        )
+        await message.reply(
+            f"✅ <b>Javobingiz {html.escape(client_name)} ga yetkazildi!</b>",
+            parse_mode="HTML"
+        )
+        logger.info(f"Admin javobi mijozga ({client_chat_id}) yetkazildi.")
+    except Exception as e:
+        await message.reply(f"❌ Xabarni mijozga yetkazishda xatolik: {e}")
+
+
+# ==========================================
+# 3. ODDIY BOT BUYRUQLARI VA START
 # ==========================================
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    # Foydalanuvchi botga /start bosganda, uni ma'lumotlar bazasida saqlab qo'yamiz
     user = message.from_user
-    logger.info(f"User /start bosdi: {user.full_name} (ID: {user.id})")
-
-    # Agar ulanishlarda hali owner_chat_id belgilanmagan bo'lsa, moslashtirib qo'yamiz
-    updated = False
-    for conn_id, info in business_connections.items():
-        if info.get("owner_id") == user.id:
-            info["owner_chat_id"] = message.chat.id
-            updated = True
-    if updated:
-        save_connections(business_connections)
+    admins = bot_data.setdefault("admins", [])
+    if user.id not in admins:
+        admins.append(user.id)
+        save_data(bot_data)
+        logger.info(f"Yangi admin ro'yxatga olindi: {user.full_name} (ID: {user.id})")
 
     text = (
-        f"👋 <b>Assalomu alaykum, {html.escape(user.first_name)}!</b>\n\n"
-        "Men <b>Telegram Business & AI Avtojavob</b> botiman.\n\n"
-        "⚡ <b>Meni Telegram profilingizga qanday ulash mumkin:</b>\n"
-        "1️⃣ Telegram <b>Sozlamalar (Настройки)</b> bo'limiga kiring.\n"
-        "2️⃣ <b>Telegram Business</b> bo'limini tanlang.\n"
-        "3️⃣ <b>Chatbotlar (Чат-боты)</b> bandiga kiring.\n"
-        f"4️⃣ Qidiruvga <code>@{ (await bot.get_me()).username }</code> deb yozing va botni ulang!\n\n"
-        "🎯 <b>Qanday ishlaydi:</b>\n"
-        "• Shaxsiy profilingizga kimdir yozsa, AI sizning nomingizdan aqlli javob beradi.\n"
-        "• Bot darhol <b>shu yerga (botingizga)</b> xabar yuborib, qaysi mijoz nima deb yozgani, uning username va profil havolasini sizga tashlaydi!\n\n"
-        "ℹ️ Bot holatini tekshirish: /status\n"
-        "⚙️ Sozlamalar va yordam: /help"
+        f"👑 <b>Assalomu alaykum, {html.escape(user.first_name)}!</b>\n\n"
+        "Men sizning <b>Aqlli Shaxsiy Yordamchingizman</b>.\n\n"
+        "🌟 <b>Tizim qanday ishlaydi:</b>\n"
+        "1️⃣ Telegram akkauntingizga mijozlar yozganda, men sizning nomingizdan muloyim javob beraman "
+        "(xabarni sizga yetkazganimni bildiraman va kerakli savollarni beraman).\n"
+        "2️⃣ Har bir yozgan mijoz bo'yicha <b>darhol shu yerga to'liq ma'lumot</b> keladi:\n"
+        "   <i>«Falonchi mijoz shunday-shunday demoqda, javob bering»</i> deb.\n"
+        "3️⃣ Siz shunchaki ushbu xabarga <b>'Reply'</b> qilib yozsangiz, javobingiz to'g'ridan-to'g'ri o'sha mijozga boradi!\n\n"
+        "ℹ️ <b>Holatni tekshirish:</b> /status\n"
+        "⚙️ <b>Qo'llanma:</b> /help"
     )
     await message.answer(text, parse_mode="HTML")
-
-
-@dp.message(Command("help"))
-async def cmd_help(message: Message):
-    help_text = (
-        "📖 <b>Telegram Business Bot Yo'riqnomasi:</b>\n\n"
-        "<b>BotFather sozlamalari:</b>\n"
-        "Bot Telegram Business bilan ishlashi uchun @BotFather da ruxsat berilgan bo'lishi kerak:\n"
-        "1. @BotFather ga kiring\n"
-        "2. <code>/mybots</code> buyrug'ini bering va botingizni tanlang\n"
-        "3. <b>Bot Settings</b> -> <b>Telegram Business</b> bo'limiga kiring\n"
-        "4. U yerdan <b>Turn On</b> qilib biznes rejimini yoqing.\n\n"
-        "<b>Profilga ulash:</b>\n"
-        "Telegram -> Sozlamalar -> Telegram Business -> Chatbotlar -> Botni tanlang.\n\n"
-        "Bot har bir avtojavob berilgan mijoz haqida sizga hisobot yuborib turadi."
-    )
-    await message.answer(help_text, parse_mode="HTML")
 
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message):
     me = await bot.get_me()
-    active_count = len(business_connections)
+    active_count = len(bot_data.get("connections", {}))
+    admins_count = len(bot_data.get("admins", []))
     status_text = (
         f"📊 <b>Bot Holati:</b>\n\n"
         f"🤖 Bot: @{me.username} ({me.first_name})\n"
         f"🧠 AI Model: <code>{ai_service.model}</code>\n"
-        f"🔗 Faol biznes ulanishlar soni: <b>{active_count} ta</b>\n"
-        f"🟢 Server holati: <b>Ishlamoqda (Online)</b>"
+        f"🔗 Faol Telegram Business ulanishlar: <b>{active_count} ta</b>\n"
+        f"👥 Bildirishnoma oluvchi adminlar: <b>{admins_count} ta</b>\n"
+        f"🟢 Server: <b>Online (Faol)</b>"
     )
     await message.answer(status_text, parse_mode="HTML")
 
 
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    help_text = (
+        "📖 <b>Foydalanish Qo'llanmasi:</b>\n\n"
+        "1. <b>Mijoz xabar yozganda:</b> Bot sizga darhol uning ismi, profili va nima degani haqida bildirishnoma tashlaydi.\n"
+        "2. <b>Mijozga javob berish uchun:</b> Kelgan xabarga 'Reply' qilib yozing yoki '✍️ Bot orqali javob yozish' tugmasini bosing.\n"
+        "3. <b>Biznes sozlamalari:</b> Agar bot ulanmagan bo'lsa, Telegram Sozlamalar -> Telegram Business -> Chatbotlar bo'limidan botni ulang."
+    )
+    await message.answer(help_text, parse_mode="HTML")
+
+
 @dp.message(F.text)
 async def on_direct_message(message: Message):
-    """
-    Agar botga to'g'ridan-to'g'ri (bot ichida) yozishsa ham AI javob qaytaradi.
-    """
+    """Botning o'ziga to'g'ridan-to'g'ri yozilgan xabarlar."""
     await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
     chat_key = f"direct_{message.chat.id}"
     reply = await ai_service.get_reply(
@@ -315,7 +437,7 @@ async def on_direct_message(message: Message):
 
 
 # ==========================================
-# ASOSIY FUNKSIYA
+# ASOSIY ISHGA TUSHIRISH
 # ==========================================
 
 async def main():
@@ -325,7 +447,6 @@ async def main():
     print(f"🤖 Bot muvaffaqiyatli ishga tushdi: @{me.username}")
     print(f"==========================================\n")
     
-    # Eskirgan updatelarni o'chirish va polling boshlash
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 

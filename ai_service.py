@@ -7,21 +7,20 @@ from openai import AsyncOpenAI
 logger = logging.getLogger(__name__)
 
 class AIService:
-    def __init__(self, api_key: str, model: str = "qwen/qwen3.8-27b", base_url: str = None, system_prompt: str = ""):
+    def __init__(self, api_key: str, model: str = "openai/gpt-oss-120b", base_url: str = None, system_prompt: str = ""):
         if base_url:
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         else:
             self.client = AsyncOpenAI(api_key=api_key)
         self.model = model or "openai/gpt-oss-120b"
         self.system_prompt = system_prompt or (
-            "Siz Telegram akkaunti egasining samimiy, xushmuomala va aqlli shaxsiy yordamchisisiz.\n"
-            "Asosiy maqsad: Mijoz bilan xuddi tirik insondek tabiiy, muloyim va qisqa suhbatlashish.\n\n"
-            "QOIDALAR:\n"
-            "1. Har safar bir xil tayyor gaplarni takrorlamang. Har bir savolga alohida, mantiqiy va lo'nda javob bering.\n"
-            "2. Salom berishsa: 'Assalomu alaykum! Yaxshimisiz?' deb samimiy alik oling.\n"
-            "3. Kvartira yoki xizmat so'rashsa: talabini (narxi, hududi, oilami yoki talabami) qisqa aniqlashtiring.\n"
-            "4. Ko'rish vaqti yoki narxini so'rashsa: savoliga to'g'ridan-to'g'ri javob bering va 'Hozir hisob egasiga ma'lumot berdim, tez orada o'zi ham yozadi' deb bildiring.\n"
-            "5. Hech qachon g'alati yoki qolip so'zlarni ishlatmang. Qisqa, 1-3 ta gapdan oshmagan holda, samimiy va erkin o'zbek tilida yozing."
+            "Siz Telegram akkaunti egasining professional shaxsiy yordamchisisiz.\n"
+            "ASOSIY VAZIFANGIZ:\n"
+            "1. Siz hisob egasi nomidan xushmuomala, muloyim va samimiy javob berasiz.\n"
+            "2. Salomlashishsa, iliq alik oling. Akkaunt egasi hozir bandligini, lekin xabarni darhol ularga yetkazganingizni bildiring.\n"
+            "3. Mijozdan kerakli ma'lumotlarni (masalan: qaysi kvartira, qaysi hudud, narxi yoki qanday savoli borligini) qisqa so'rab oling.\n"
+            "4. Qisqa, lo'nda va tabiiy (1-3 ta gap) o'zbek tilida yozing. Hech qachon bir xil qolip so'zlarni takrorlamang.\n"
+            "5. Hisob egasi tez orada o'zi shaxsan to'liq javob qaytarishini ayting."
         )
         self.histories: Dict[str, List[dict]] = defaultdict(list)
         self.max_history = 10
@@ -59,17 +58,12 @@ class AIService:
 
         except openai.RateLimitError as e:
             logger.error(f"OpenAI RateLimit / Balans xatosi: {e}")
-            if "credit_balance_exhausted" in str(e) or "insufficient_quota" in str(e):
-                return (
-                    "⚠️ [Avtojavob Tizimi]: Kechirasiz, hisobimdagi OpenAI balansi tugaganligi sababli "
-                    "avtomatik javob bera olmadim. Tez orada egam o'zi sizga yozadi!"
-                )
-            return "Kechirasiz, sun'iy intellekt xizmati band. Birozdan so'ng qayta yozing."
+            return "Assalomu alaykum! Xabaringiz hisob egasiga yetkazildi, tez orada javob yozadi."
 
         except openai.AuthenticationError as e:
-            logger.error(f"OpenAI API kaliti xato: {e}")
-            return "Kechirasiz, AI tizimi sozlamalarida xatolik bor (API kalit noto'g'ri)."
+            logger.error(f"API kaliti xato: {e}")
+            return "Assalomu alaykum! Xabaringiz qabul qilindi, tez orada bog'lanamiz."
 
         except Exception as e:
-            logger.error(f"AI javob olishda kutilmagan xatolik: {e}")
-            return "Assalomu alaykum! Xabaringiz qabul qilindi, tez orada javob qaytaraman."
+            logger.error(f"AI javob olishda xatolik: {e}")
+            return "Assalomu alaykum! Xabaringiz yetkazildi, tez orada o'zim sizga yozaman."
