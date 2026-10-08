@@ -56,7 +56,7 @@ def load_data() -> dict:
     return {
         "connections": {},
         "admins": [],
-        "owner_name": "Akkaunt egasi",
+        "owner_name": "Zayniddin",
         "owner_status": "offline",  # "online" yoki "offline"
         "chat_bot_messages": {},    # { "conn_id_chat_id": [msg_id, ...] }
         "admin_notifications": {}   # { "conn_id_chat_id": [[admin_id, msg_id], ...] }
@@ -73,8 +73,10 @@ bot_data = load_data()
 bot_data.setdefault("owner_status", "offline")
 bot_data.setdefault("chat_bot_messages", {})
 bot_data.setdefault("admin_notifications", {})
+if not bot_data.get("owner_name") or bot_data.get("owner_name") == "Akkaunt egasi":
+    bot_data["owner_name"] = "Zayniddin"
 
-current_owner_name = bot_data.get("owner_name", "Akkaunt egasi")
+current_owner_name = bot_data["owner_name"]
 
 # AI servisini ishga tushirish
 ai_service = AIService(
@@ -234,9 +236,9 @@ async def on_business_connection(connection: BusinessConnection):
             "owner_name": user.full_name,
             "owner_username": user.username,
         }
-        if bot_data.get("owner_name") in ["Akkaunt egasi", "", None]:
-            bot_data["owner_name"] = user.full_name
-            ai_service.set_owner_name(user.full_name)
+        if not bot_data.get("owner_name") or bot_data.get("owner_name") in ["Akkaunt egasi", "", None]:
+            bot_data["owner_name"] = "Zayniddin"
+            ai_service.set_owner_name("Zayniddin")
 
         admins = bot_data.setdefault("admins", [])
         if user.id not in admins:
@@ -599,9 +601,9 @@ async def cmd_start(message: Message):
     if user.id not in admins:
         admins.append(user.id)
 
-    if bot_data.get("owner_name") in ["Akkaunt egasi", "", None]:
-        bot_data["owner_name"] = user.full_name
-        ai_service.set_owner_name(user.full_name)
+    if not bot_data.get("owner_name") or bot_data.get("owner_name") in ["Akkaunt egasi", "", None]:
+        bot_data["owner_name"] = "Zayniddin"
+        ai_service.set_owner_name("Zayniddin")
 
     save_data(bot_data)
 

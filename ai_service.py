@@ -1,4 +1,5 @@
 import logging
+import re
 from collections import defaultdict
 from typing import Dict, List
 import openai
@@ -12,7 +13,7 @@ class AIService:
         api_key: str,
         model: str = "openai/gpt-oss-120b",
         base_url: str = None,
-        owner_name: str = "Akkaunt egasi",
+        owner_name: str = "Zayniddin",
         system_prompt: str = ""
     ):
         if base_url:
@@ -20,7 +21,7 @@ class AIService:
         else:
             self.client = AsyncOpenAI(api_key=api_key)
         self.model = model or "openai/gpt-oss-120b"
-        self.owner_name = owner_name or "Akkaunt egasi"
+        self.owner_name = owner_name or "Zayniddin"
         self.custom_prompt = system_prompt
         self.histories: Dict[str, List[dict]] = defaultdict(list)
         self.max_history = 10
@@ -30,24 +31,46 @@ class AIService:
         if name and name.strip():
             self.owner_name = name.strip()
 
-    def build_system_prompt(self) -> str:
-        """Ega ismiga moslangan tizim ko'rsatmasini shakllantirish."""
-        if self.custom_prompt:
-            return self.custom_prompt
+    def is_creator_question(self, text: str) -> bool:
+        """Egang kim, seni kim yaratgan kabi savollarni 100% aniqlash."""
+        t = text.lower().strip()
+        patterns = [
+            r'kim yaratgan',
+            r'egang kim',
+            r'egeng kim',
+            r'egasi kim',
+            r'kimning boti',
+            r'kimning yordamchisi',
+            r'kim tuzgan',
+            r'kim qildi',
+            r'kim yozdi',
+            r'kim ishlab chiq',
+            r'open\s*ai',
+            r'chat\s*gpt',
+            r'kimning odamisan',
+            r'sen kimsan',
+            r'kim bu'
+        ]
+        for p in patterns:
+            if re.search(p, t):
+                return True
+        return False
 
-        name = self.owner_name
+    def build_system_prompt(self) -> str:
+        """Ega ismiga moslangan qat'iy tizim ko'rsatmasi."""
+        name = self.owner_name or "Zayniddin"
         return (
-            f"Siz {name}ning professional, sodiq va samimiy shaxsiy yordamchisisiz.\n"
-            f"QAT'IY VA MUHIM QOIDALAR:\n"
-            f"1. Sizni {name} yaratgan va siz faqat {name}ning shaxsiy yordamchisisiz. "
-            f"Agar sizdan 'Egang kim?', 'Seni kim yaratgan?', 'Kimning botisan?' yoki shunga o'xshash savol so'rashsa, "
-            f"har doim hurmat bilan: 'Meni {name} yaratgan, men {name}ning shaxsiy yordamchisiman!' deb javob bering.\n"
-            f"2. HECH QACHON 'Men OpenAI man', 'Men ChatGPT man', 'Men til modeliman', 'Men botman/sun'iy intellektman' deb aytmang! "
-            f"Bu qat'iyan taqiqlanadi. Har doim {name}ning shaxsiy yordamchisi sifatida gapiring.\n"
-            f"3. Doimo {name} nomidan xushmuomala, muloyim va samimiy muloqot qiling.\n"
-            f"4. Salomlashishsa, iliq alik oling. {name} hozir biroz bandligini, lekin xabarni darhol ularga yetkazganingizni bildiring.\n"
-            f"5. Mijozdan kerakli ma'lumotlarni qisqa so'rab oling va {name} tez orada o'zi to'liq bog'lanishini ayting.\n"
-            f"6. Javoblaringiz qisqa (1-3 ta gap), tabiiy va adabiy o'zbek tilida bo'lsin. Bir xil qolipli so'zlarni takrorlamang."
+            f"SIZNING IDENTIKLIGINGIZ (ENG MUHIM QAT'IY QOIDA):\n"
+            f"Sizni faqat va faqat {name} yaratgan! Siz {name}ning sodiq shaxsiy yordamchisisiz!\n"
+            f"Agar kimdir 'Seni kim yaratgan?', 'Egang kim?', 'Kimning botisan?' deb so'rasa, "
+            f"har doim: 'Meni {name} yaratgan, men {name}ning shaxsiy yordamchisiman!' deb javob bering.\n"
+            f"QAT'IYAN TAQIQLANADI: Hech qachon 'OpenAI', 'ChatGPT', 'til modeliman', 'sun'iy intellektman' deb aytmang! "
+            f"Siz faqat {name}ning shaxsiy yordamchisisiz.\n\n"
+            f"VAZIFANGIZ:\n"
+            f"1. {name} nomidan xushmuomala, muloyim va tabiiy o'zbek tilida gaplashing.\n"
+            f"2. Salomlashishsa, iliq alik oling. {name} hozir biroz bandligini, lekin xabarni darhol ularga yetkazganingizni bildiring.\n"
+            f"3. Mijozdan kerakli ma'lumotlarni qisqa so'rab oling va {name} tez orada o'zi bog'lanishini ayting.\n"
+            f"4. Javoblaringiz qisqa (1-3 ta gap) va lo'nda bo'lsin."
         )
 
     def _get_history(self, chat_key: str) -> List[dict]:
@@ -65,6 +88,12 @@ class AIService:
         """
         self._add_to_history(chat_key, "user", user_message)
 
+        # 1. Egang kim / Seni kim yaratgan savollari bo'lsa darhol 100% aniq javob berish
+        if self.is_creator_question(user_message):
+            reply = f"Meni {self.owner_name} yaratgan, men {self.owner_name}ning shaxsiy yordamchisiman!"
+            self._add_to_history(chat_key, "assistant", reply)
+            return reply
+
         system_instruction = self.build_system_prompt()
         messages = [{"role": "system", "content": system_instruction}]
         messages.extend(self._get_history(chat_key))
@@ -79,6 +108,11 @@ class AIService:
                 max_tokens=500,
             )
             reply = response.choices[0].message.content.strip()
+
+            # 2. Xavfsizlik filtri: Agar javobda tasodifan OpenAI yoki ChatGPT chiqsa, tozalaymiz
+            if "openai" in reply.lower() or "chatgpt" in reply.lower():
+                reply = f"Meni {self.owner_name} yaratgan, men {self.owner_name}ning shaxsiy yordamchisiman!"
+
             self._add_to_history(chat_key, "assistant", reply)
             return reply
 
