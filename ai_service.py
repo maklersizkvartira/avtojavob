@@ -7,23 +7,48 @@ from openai import AsyncOpenAI
 logger = logging.getLogger(__name__)
 
 class AIService:
-    def __init__(self, api_key: str, model: str = "openai/gpt-oss-120b", base_url: str = None, system_prompt: str = ""):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "openai/gpt-oss-120b",
+        base_url: str = None,
+        owner_name: str = "Akkaunt egasi",
+        system_prompt: str = ""
+    ):
         if base_url:
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         else:
             self.client = AsyncOpenAI(api_key=api_key)
         self.model = model or "openai/gpt-oss-120b"
-        self.system_prompt = system_prompt or (
-            "Siz Telegram akkaunti egasining professional shaxsiy yordamchisisiz.\n"
-            "ASOSIY VAZIFANGIZ:\n"
-            "1. Siz hisob egasi nomidan xushmuomala, muloyim va samimiy javob berasiz.\n"
-            "2. Salomlashishsa, iliq alik oling. Akkaunt egasi hozir bandligini, lekin xabarni darhol ularga yetkazganingizni bildiring.\n"
-            "3. Mijozdan kerakli ma'lumotlarni (masalan: qaysi kvartira, qaysi hudud, narxi yoki qanday savoli borligini) qisqa so'rab oling.\n"
-            "4. Qisqa, lo'nda va tabiiy (1-3 ta gap) o'zbek tilida yozing. Hech qachon bir xil qolip so'zlarni takrorlamang.\n"
-            "5. Hisob egasi tez orada o'zi shaxsan to'liq javob qaytarishini ayting."
-        )
+        self.owner_name = owner_name or "Akkaunt egasi"
+        self.custom_prompt = system_prompt
         self.histories: Dict[str, List[dict]] = defaultdict(list)
         self.max_history = 10
+
+    def set_owner_name(self, name: str):
+        """Ega ismini yangilash."""
+        if name and name.strip():
+            self.owner_name = name.strip()
+
+    def build_system_prompt(self) -> str:
+        """Ega ismiga moslangan tizim ko'rsatmasini shakllantirish."""
+        if self.custom_prompt:
+            return self.custom_prompt
+
+        name = self.owner_name
+        return (
+            f"Siz {name}ning professional, sodiq va samimiy shaxsiy yordamchisisiz.\n"
+            f"QAT'IY VA MUHIM QOIDALAR:\n"
+            f"1. Sizni {name} yaratgan va siz faqat {name}ning shaxsiy yordamchisisiz. "
+            f"Agar sizdan 'Egang kim?', 'Seni kim yaratgan?', 'Kimning botisan?' yoki shunga o'xshash savol so'rashsa, "
+            f"har doim hurmat bilan: 'Meni {name} yaratgan, men {name}ning shaxsiy yordamchisiman!' deb javob bering.\n"
+            f"2. HECH QACHON 'Men OpenAI man', 'Men ChatGPT man', 'Men til modeliman', 'Men botman/sun'iy intellektman' deb aytmang! "
+            f"Bu qat'iyan taqiqlanadi. Har doim {name}ning shaxsiy yordamchisi sifatida gapiring.\n"
+            f"3. Doimo {name} nomidan xushmuomala, muloyim va samimiy muloqot qiling.\n"
+            f"4. Salomlashishsa, iliq alik oling. {name} hozir biroz bandligini, lekin xabarni darhol ularga yetkazganingizni bildiring.\n"
+            f"5. Mijozdan kerakli ma'lumotlarni qisqa so'rab oling va {name} tez orada o'zi to'liq bog'lanishini ayting.\n"
+            f"6. Javoblaringiz qisqa (1-3 ta gap), tabiiy va adabiy o'zbek tilida bo'lsin. Bir xil qolipli so'zlarni takrorlamang."
+        )
 
     def _get_history(self, chat_key: str) -> List[dict]:
         return self.histories[chat_key]
@@ -40,30 +65,31 @@ class AIService:
         """
         self._add_to_history(chat_key, "user", user_message)
 
-        messages = [{"role": "system", "content": self.system_prompt}]
+        system_instruction = self.build_system_prompt()
+        messages = [{"role": "system", "content": system_instruction}]
         messages.extend(self._get_history(chat_key))
 
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=0.7,
+                temperature=0.6,
                 frequency_penalty=0.4,
                 presence_penalty=0.4,
-                max_tokens=600,
+                max_tokens=500,
             )
             reply = response.choices[0].message.content.strip()
             self._add_to_history(chat_key, "assistant", reply)
             return reply
 
         except openai.RateLimitError as e:
-            logger.error(f"OpenAI RateLimit / Balans xatosi: {e}")
-            return "Assalomu alaykum! Xabaringiz hisob egasiga yetkazildi, tez orada javob yozadi."
+            logger.error(f"OpenAI RateLimit xatosi: {e}")
+            return f"Assalomu alaykum! Xabaringiz {self.owner_name}ga yetkazildi, tez orada o'zlari javob yozadilar."
 
         except openai.AuthenticationError as e:
             logger.error(f"API kaliti xato: {e}")
-            return "Assalomu alaykum! Xabaringiz qabul qilindi, tez orada bog'lanamiz."
+            return f"Assalomu alaykum! Xabaringiz {self.owner_name}ga qabul qilindi, tez orada bog'lanamiz."
 
         except Exception as e:
             logger.error(f"AI javob olishda xatolik: {e}")
-            return "Assalomu alaykum! Xabaringiz yetkazildi, tez orada o'zim sizga yozaman."
+            return f"Assalomu alaykum! Xabaringiz {self.owner_name}ga yetkazildi, tez orada javob qaytaramiz."

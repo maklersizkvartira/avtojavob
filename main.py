@@ -43,17 +43,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("telegram_business_bot")
 
-# AI servisini ishga tushirish
-ai_service = AIService(
-    api_key=OPENAI_API_KEY,
-    model=AI_MODEL,
-    base_url=AI_BASE_URL if AI_BASE_URL else None,
-    system_prompt=SYSTEM_PROMPT
-)
-
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
 # Ma'lumotlarni doimiy saqlash fayli
 DATA_FILE = "bot_data.json"
 
@@ -64,7 +53,7 @@ def load_data() -> dict:
                 return json.load(f)
         except Exception as e:
             logger.warning(f"Ma'lumotlar faylini o'qishda xatolik: {e}")
-    return {"connections": {}, "admins": [], "dialog_map": {}}
+    return {"connections": {}, "admins": [], "owner_name": "Akkaunt egasi"}
 
 def save_data(data: dict):
     try:
@@ -74,13 +63,27 @@ def save_data(data: dict):
         logger.error(f"Ma'lumotlar faylini saqlashda xatolik: {e}")
 
 bot_data = load_data()
+current_owner_name = bot_data.get("owner_name", "Akkaunt egasi")
+
+# AI servisini ishga tushirish
+ai_service = AIService(
+    api_key=OPENAI_API_KEY,
+    model=AI_MODEL,
+    base_url=AI_BASE_URL if AI_BASE_URL else None,
+    owner_name=current_owner_name,
+    system_prompt=SYSTEM_PROMPT
+)
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
 # Xotiradagi xabarlar xaritasi (notification_msg_id -> client info)
 notification_map: dict[int, dict] = {}
 
 
-class AdminReplyState(StatesGroup):
+class FormStates(StatesGroup):
     waiting_for_reply = State()
+    waiting_for_owner_name = State()
 
 
 # ==========================================
@@ -184,7 +187,11 @@ async def on_business_connection(connection: BusinessConnection):
             "owner_name": user.full_name,
             "owner_username": user.username,
         }
-        # Adminlar ro'yxatiga ham qo'shib qo'yamiz
+        # Agar ega ismi hali berilmagan bo'lsa, foydalanuvchi ismini qo'yamiz
+        if bot_data.get("owner_name") in ["Akkaunt egasi", "", None]:
+            bot_data["owner_name"] = user.full_name
+            ai_service.set_owner_name(user.full_name)
+
         admins = bot_data.setdefault("admins", [])
         if user.id not in admins:
             admins.append(user.id)
@@ -192,13 +199,14 @@ async def on_business_connection(connection: BusinessConnection):
         save_data(bot_data)
         logger.info(f"✅ Yangi biznes ulanish! {user.full_name} (ID: {user.id}) | ConnID: {conn_id}")
 
-        # Egasiga tabrik xabari
         try:
             await bot.send_message(
                 chat_id=user.id,
-                text="🎉 <b>Bot muvaffaqiyatli ulandi!</b>\n\n"
-                     "Endi shaxsiy hisobingizga kimdir yozsa, AI sizning nomingizdan samimiy javob qaytaradi va "
-                     "shu yerga darhol kim yozgani haqida to'liq hisobot keladi!",
+                text=f"🎉 <b>Bot muvaffaqiyatli ulandi!</b>\n\n"
+                     f"👑 Joriy Ega Ismi: <b>{html.escape(ai_service.owner_name)}</b>\n\n"
+                     "Endi shaxsiy hisobingizga kimdir yozsa, AI sizning nomingizdan samimiy javob beradi va "
+                     "shu yerga darhol kim yozgani haqida to'liq hisobot keladi!\n\n"
+                     "Ismingizni o'zgartirish uchun: /settings buyrug'idan foydalaning.",
                 parse_mode="HTML"
             )
         except Exception:
@@ -279,15 +287,112 @@ async def on_deleted_business_messages(event: BusinessMessagesDeleted):
 
 
 # ==========================================
-# 2. HISOB EGASI UCHUN BUYRUQ VA JAVOB QAYTARISH
+# 2. SOZLAMALAR VA EGA ISMINI TAHRIRLASH
+# ==========================================
+
+def get_settings_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Ega ismini o'zgartirish", callback_data="change_owner_name")],
+            [InlineKeyboardButton(text="📊 Holatni tekshirish", callback_data="check_status")]
+        ]
+    )
+
+
+@dp.callback_query(F.data == "change_owner_name")
+async def cb_change_owner_name(call: CallbackQuery, state: FSMContext):
+    await state.set_state(FormStates.waiting_for_owner_name)
+    await call.message.reply(
+        "✍️ <b>O'z ismingizni yoki brend nomingizni yozib yuboring:</b>\n\n"
+        "<i>(Masalan: Sardor, Asadbek, Maklersiz Kvartira va h.k.)</i>\n\n"
+        "Shundan so'ng bot kimdir «Egang kim?» yoki «Seni kim yaratgan?» desa, "
+        "aynan shu ismni aytib javob beradi!",
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@dp.message(FormStates.waiting_for_owner_name, F.text)
+async def process_new_owner_name(message: Message, state: FSMContext):
+    new_name = message.text.strip()
+    if not new_name:
+        await message.reply("Iltimos, haqiqiy ism kiriting.")
+        return
+
+    bot_data["owner_name"] = new_name
+    save_data(bot_data)
+    ai_service.set_owner_name(new_name)
+    await state.clear()
+
+    await message.reply(
+        f"✅ <b>Ega ismi muvaffaqiyatli saqlandi: «{html.escape(new_name)}»!</b>\n\n"
+        f"Endi bot sizning shaxsiy yordamchingiz sifatida taniladi:\n"
+        f"• «Egang kim?» ➡️ <i>«Meni {html.escape(new_name)} yaratgan, men {html.escape(new_name)}ning shaxsiy yordamchisiman!»</i>\n"
+        f"• Hech qachon OpenAI yoki ChatGPT degan so'zlar tilga olinmaydi.",
+        parse_mode="HTML",
+        reply_markup=get_settings_keyboard()
+    )
+
+
+@dp.message(Command("setname"))
+async def cmd_setname(message: Message):
+    """Buyruq orqali to'g'ridan-to'g'ri ism o'rnatish: /setname Sardor"""
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.reply(
+            "ℹ️ <b>Foydalanish:</b> <code>/setname Sizning_Ismingiz</code>\n\n"
+            "Masalan: <code>/setname Asadbek</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    new_name = args[1].strip()
+    bot_data["owner_name"] = new_name
+    save_data(bot_data)
+    ai_service.set_owner_name(new_name)
+
+    await message.reply(
+        f"✅ <b>Ega ismi o'rnatildi: «{html.escape(new_name)}»!</b>\n\n"
+        f"Bot endi faqat sizning nomingizdan («{html.escape(new_name)}ning shaxsiy yordamchisi») deb javob qaytaradi.",
+        parse_mode="HTML"
+    )
+
+
+@dp.message(Command("settings"))
+async def cmd_settings(message: Message):
+    current_name = ai_service.owner_name
+    text = (
+        "⚙️ <b>SOZLAMALAR VA BOSHQARUV PANELI</b>\n\n"
+        f"👑 <b>Joriy Ega Ismi:</b> <code>{html.escape(current_name)}</code>\n"
+        f"🤖 <b>AI Modeli:</b> <code>{ai_service.model}</code>\n"
+        f"🔗 <b>Telegram Business:</b> Faol\n\n"
+        "O'zgartirish uchun quyidagi tugmani bosing:"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=get_settings_keyboard())
+
+
+@dp.callback_query(F.data == "check_status")
+async def cb_check_status(call: CallbackQuery):
+    me = await bot.get_me()
+    active_count = len(bot_data.get("connections", {}))
+    status_text = (
+        f"📊 <b>Bot Holati:</b>\n\n"
+        f"🤖 Bot: @{me.username} ({me.first_name})\n"
+        f"👑 Ega Ismi: <b>{html.escape(ai_service.owner_name)}</b>\n"
+        f"🧠 AI Model: <code>{ai_service.model}</code>\n"
+        f"🔗 Telegram Business ulanishlar: <b>{active_count} ta</b>\n"
+        f"🟢 Server: <b>Online</b>"
+    )
+    await call.message.reply(status_text, parse_mode="HTML")
+    await call.answer()
+
+
+# ==========================================
+# 3. MIJOZGA JAVOB YOZISH (IKKI TOMONLAMA CHAT)
 # ==========================================
 
 @dp.callback_query(F.data.startswith("rep_"))
 async def cb_start_reply(call: CallbackQuery, state: FSMContext):
-    """
-    Hisob egasi '✍️ Bot orqali javob yozish' tugmasini bosganda ishga tushadi.
-    """
-    client_id = int(call.data.replace("rep_", ""))
     msg_id = call.message.message_id
     info = notification_map.get(msg_id)
 
@@ -295,7 +400,7 @@ async def cb_start_reply(call: CallbackQuery, state: FSMContext):
         await call.answer("Ushbu murojaat ma'lumotlari yangilangan, bevosita profilga yozing.", show_alert=True)
         return
 
-    await state.set_state(AdminReplyState.waiting_for_reply)
+    await state.set_state(FormStates.waiting_for_reply)
     await state.update_data(
         conn_id=info["conn_id"],
         client_chat_id=info["client_chat_id"],
@@ -310,11 +415,8 @@ async def cb_start_reply(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-@dp.message(AdminReplyState.waiting_for_reply, F.text)
+@dp.message(FormStates.waiting_for_reply, F.text)
 async def process_admin_reply_state(message: Message, state: FSMContext):
-    """
-    Admin tugma orqali javob matnini yuborganida.
-    """
     data = await state.get_data()
     conn_id = data.get("conn_id")
     client_chat_id = data.get("client_chat_id")
@@ -339,14 +441,11 @@ async def process_admin_reply_state(message: Message, state: FSMContext):
 
 @dp.message(F.reply_to_message, F.text)
 async def process_admin_direct_reply(message: Message):
-    """
-    Admin to'g'ridan-to'g'ri bildirishnoma xabariga 'Reply' (Javob berish) qilib yozganda.
-    """
+    """Admin bildirishnoma xabariga 'Reply' qilib yozganida."""
     replied_msg_id = message.reply_to_message.message_id
     info = notification_map.get(replied_msg_id)
 
     if not info:
-        # Oddiy suhbat bo'lishi mumkin
         return
 
     conn_id = info["conn_id"]
@@ -369,7 +468,7 @@ async def process_admin_direct_reply(message: Message):
 
 
 # ==========================================
-# 3. ODDIY BOT BUYRUQLARI VA START
+# 4. START VA ODDIY BUYRUQLAR
 # ==========================================
 
 @dp.message(CommandStart())
@@ -378,36 +477,41 @@ async def cmd_start(message: Message):
     admins = bot_data.setdefault("admins", [])
     if user.id not in admins:
         admins.append(user.id)
-        save_data(bot_data)
-        logger.info(f"Yangi admin ro'yxatga olindi: {user.full_name} (ID: {user.id})")
+
+    # Agar hali ega ismi o'rnatilmagan bo'lsa, avtomatik biriktiramiz
+    if bot_data.get("owner_name") in ["Akkaunt egasi", "", None]:
+        bot_data["owner_name"] = user.full_name
+        ai_service.set_owner_name(user.full_name)
+
+    save_data(bot_data)
+    logger.info(f"Admin ro'yxatga olindi: {user.full_name} (ID: {user.id})")
+
+    current_name = ai_service.owner_name
 
     text = (
         f"👑 <b>Assalomu alaykum, {html.escape(user.first_name)}!</b>\n\n"
-        "Men sizning <b>Aqlli Shaxsiy Yordamchingizman</b>.\n\n"
-        "🌟 <b>Tizim qanday ishlaydi:</b>\n"
-        "1️⃣ Telegram akkauntingizga mijozlar yozganda, men sizning nomingizdan muloyim javob beraman "
-        "(xabarni sizga yetkazganimni bildiraman va kerakli savollarni beraman).\n"
-        "2️⃣ Har bir yozgan mijoz bo'yicha <b>darhol shu yerga to'liq ma'lumot</b> keladi:\n"
-        "   <i>«Falonchi mijoz shunday-shunday demoqda, javob bering»</i> deb.\n"
-        "3️⃣ Siz shunchaki ushbu xabarga <b>'Reply'</b> qilib yozsangiz, javobingiz to'g'ridan-to'g'ri o'sha mijozga boradi!\n\n"
-        "ℹ️ <b>Holatni tekshirish:</b> /status\n"
-        "⚙️ <b>Qo'llanma:</b> /help"
+        f"Men sizning (<b>{html.escape(current_name)}</b>ning) <b>Aqlli Shaxsiy Yordamchingizman</b>.\n\n"
+        "🌟 <b>Imkoniyatlar:</b>\n"
+        "• Mijozlar profilingizga yozsa, men sizning nomingizdan muloyim javob beraman.\n"
+        f"• «Egang kim?» yoki «Seni kim yaratgan?» deyishsa: <i>«Meni {html.escape(current_name)} yaratgan, men {html.escape(current_name)}ning shaxsiy yordamchisiman»</i> deb javob beraman (hech qachon OpenAI so'zi chiqmaydi).\n"
+        "• Har bir murojaat bo'yicha <b>darhol shu yerga to'liq hisobot</b> keladi.\n"
+        "• Siz ushbu xabarga <b>'Reply'</b> qilib yozsangiz, javobingiz to'g'ridan-to'g'ri mijozga boradi!\n\n"
+        "⚙️ Ismni o'zgartirish: /settings yoki <code>/setname Ismingiz</code>"
     )
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=get_settings_keyboard())
 
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message):
     me = await bot.get_me()
     active_count = len(bot_data.get("connections", {}))
-    admins_count = len(bot_data.get("admins", []))
     status_text = (
         f"📊 <b>Bot Holati:</b>\n\n"
         f"🤖 Bot: @{me.username} ({me.first_name})\n"
+        f"👑 Ega Ismi: <b>{html.escape(ai_service.owner_name)}</b>\n"
         f"🧠 AI Model: <code>{ai_service.model}</code>\n"
-        f"🔗 Faol Telegram Business ulanishlar: <b>{active_count} ta</b>\n"
-        f"👥 Bildirishnoma oluvchi adminlar: <b>{admins_count} ta</b>\n"
-        f"🟢 Server: <b>Online (Faol)</b>"
+        f"🔗 Telegram Business: <b>{active_count} ta ulanish</b>\n"
+        f"🟢 Server: <b>Online</b>"
     )
     await message.answer(status_text, parse_mode="HTML")
 
@@ -415,10 +519,11 @@ async def cmd_status(message: Message):
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     help_text = (
-        "📖 <b>Foydalanish Qo'llanmasi:</b>\n\n"
-        "1. <b>Mijoz xabar yozganda:</b> Bot sizga darhol uning ismi, profili va nima degani haqida bildirishnoma tashlaydi.\n"
-        "2. <b>Mijozga javob berish uchun:</b> Kelgan xabarga 'Reply' qilib yozing yoki '✍️ Bot orqali javob yozish' tugmasini bosing.\n"
-        "3. <b>Biznes sozlamalari:</b> Agar bot ulanmagan bo'lsa, Telegram Sozlamalar -> Telegram Business -> Chatbotlar bo'limidan botni ulang."
+        "📖 <b>Buyruqlar va Qo'llanma:</b>\n\n"
+        "• /settings — Sozlamalar va Ega ismini o'zgartirish tugmasi.\n"
+        "• <code>/setname Ismingiz</code> — Ismingizni 1 soniyada o'zgartirish (Masalan: <code>/setname Sardor</code>).\n"
+        "• /status — Bot holati va statistika.\n\n"
+        "<b>Mijozga javob berish:</b> Kelgan xabarga shunchaki 'Reply' qilib yozing."
     )
     await message.answer(help_text, parse_mode="HTML")
 
@@ -442,9 +547,10 @@ async def on_direct_message(message: Message):
 
 async def main():
     me = await bot.get_me()
-    logger.info(f"Bot ishga tushdi: @{me.username} ({me.first_name})")
+    logger.info(f"Bot ishga tushdi: @{me.username} ({me.first_name}) | Ega: {ai_service.owner_name}")
     print(f"\n==========================================")
     print(f"🤖 Bot muvaffaqiyatli ishga tushdi: @{me.username}")
+    print(f"👑 Ega ismi: {ai_service.owner_name}")
     print(f"==========================================\n")
     
     await bot.delete_webhook(drop_pending_updates=True)
