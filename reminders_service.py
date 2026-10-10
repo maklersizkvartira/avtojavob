@@ -1,11 +1,18 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import html
 import logging
 import uuid
 from typing import Callable, Dict, List, Optional
 
 logger = logging.getLogger("reminders_service")
+
+# Toshkent vaqt zonasi (UTC+5) - server qayerda bo'lsa ham O'zbekiston vaqti olinadi
+TZ_TASHKENT = timezone(timedelta(hours=5))
+
+def get_now() -> datetime:
+    """Toshkent vaqti (UTC+5)."""
+    return datetime.now(TZ_TASHKENT).replace(tzinfo=None)
 
 
 class ReminderManager:
@@ -35,7 +42,7 @@ class ReminderManager:
             "id": rem_id,
             "task": task,
             "datetime_iso": rem_datetime_iso,
-            "created_at": datetime.now().isoformat(),
+            "created_at": get_now().isoformat(),
             "source": source,  # "manual" yoki "ai_detected"
             "client_name": client_name,
             "target_chat_id": target_chat_id,
@@ -84,7 +91,7 @@ class ReminderManager:
         data = self.data_getter()
         for r in data.setdefault("reminders", []):
             if r.get("id") == rem_id:
-                new_dt = datetime.now() + timedelta(minutes=minutes)
+                new_dt = get_now() + timedelta(minutes=minutes)
                 r["datetime_iso"] = new_dt.isoformat()
                 r["status"] = "pending"
                 r["call_status"] = "snoozed"
@@ -98,11 +105,11 @@ class ReminderManager:
         Har 10 soniyada vaqti kelgan eslatmalarni ishga tushiradi.
         """
         self.running = True
-        logger.info("⏰ Eslatmalar va qo'ng'iroqlar skaneri ishga tushdi.")
+        logger.info("⏰ Eslatmalar va qo'ng'iroqlar skaneri ishga tushdi (Toshkent vaqti UTC+5).")
 
         while self.running:
             try:
-                now = datetime.now()
+                now = get_now()
                 data = self.data_getter()
                 reminders = data.setdefault("reminders", [])
                 has_updates = False

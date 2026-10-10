@@ -24,7 +24,7 @@ from aiogram.enums import ChatAction
 
 from ai_service import AIService
 from call_service import CallService
-from reminders_service import ReminderManager
+from reminders_service import ReminderManager, get_now
 
 # .env faylini yuklash
 load_dotenv()
@@ -133,6 +133,11 @@ def get_all_target_admins() -> set[int]:
 async def on_reminder_triggered(rem: dict):
     """Eslatma vaqti yetganda qo'ng'iroq qilish va barcha adminlarni ogohlantirish."""
     targets = get_all_target_admins()
+    if rem.get("target_chat_id"):
+        try:
+            targets.add(int(rem["target_chat_id"]))
+        except Exception:
+            pass
     rem_id = rem.get("id")
     task_text = rem.get("task", "Muhim vazifa")
     dt_str = rem.get("datetime_iso", "")
@@ -699,14 +704,35 @@ async def process_reminder_text_common(message: Message, text: str, state: FSMCo
     await state.clear()
     await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
 
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    # Toshkent vaqti (UTC+5)
+    now_str = get_now().strftime("%Y-%m-%d %H:%M")
     parsed = await ai_service.parse_natural_reminder(text, now_str)
 
     if not parsed.get("success") or not parsed.get("datetime_iso"):
+        # Agar foydalanuvchi faqat vazifani yozib vaqtini aytmagan bo'lsa, tezkor vaqt tugmalarini beramiz!
+        task_preview = text[:35]
+        bot_data.setdefault("temp_tasks", {})[str(message.chat.id)] = text
+        save_data(bot_data)
+
+        quick_buttons = [
+            [
+                InlineKeyboardButton(text="⏱ 5 daqiqadan so'ng", callback_data="qtime_5"),
+                InlineKeyboardButton(text="⏱ 15 daqiqadan so'ng", callback_data="qtime_15")
+            ],
+            [
+                InlineKeyboardButton(text="⏰ 1 soatdan so'ng", callback_data="qtime_60"),
+                InlineKeyboardButton(text="⏰ 3 soatdan so'ng", callback_data="qtime_180")
+            ],
+            [
+                InlineKeyboardButton(text="🌅 Ertaga 09:00 da", callback_data="qtime_tom9"),
+                InlineKeyboardButton(text="❌ Bekor qilish", callback_data="settings_back")
+            ]
+        ]
         await message.reply(
-            "⚠️ <b>Vaqtni aniqlab bo'lmadi!</b>\n\n"
-            "Iltimos, aniqroq yozing. Masalan: «Ertaga 16:00 da shartnoma imzolash» yoki «15 daqiqadan so'ng».",
-            parse_mode="HTML"
+            f"📝 <b>Vazifa qabul qilindi:</b> «{html.escape(text)}»\n\n"
+            "⏰ <b>Qachon qo'ng'iroq qilishim kerak?</b> Quyidagi vaqtlardan birini tanlang:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=quick_buttons)
         )
         return
 
@@ -732,7 +758,7 @@ async def process_reminder_text_common(message: Message, text: str, state: FSMCo
     confirm_text = (
         "✅ <b>YANGI ESLATMA VA QO'NG'IROQ SAQLANDI!</b>\n\n"
         f"📝 <b>Vazifa:</b> <blockquote>{html.escape(task_name)}</blockquote>\n"
-        f"⏰ <b>Vaqti:</b> <b>{display_time}</b>\n"
+        f"⏰ <b>Vaqti:</b> <b>{display_time} (Toshkent vaqti)</b>\n"
         f"📞 <b>Qo'ng'iroq tizimi:</b> {userbot_status}\n\n"
         "<i>Belgilangan daqiqada bot sizga avtomatik qo'ng'iroq qiladi va eslatadi!</i>"
     )
@@ -743,6 +769,57 @@ async def process_reminder_text_common(message: Message, text: str, state: FSMCo
         ]
     )
     await message.reply(confirm_text, parse_mode="HTML", reply_markup=markup)
+
+
+@dp.callback_query(F.data.startswith("qtime_"))
+async def cb_quick_time_reminder(call: CallbackQuery):
+    time_key = call.data.replace("qtime_", "")
+    user_id = call.from_user.id
+    task_name = bot_data.get("temp_tasks", {}).get(str(call.message.chat.id), "Muhim vazifa")
+
+    now = get_now()
+    if time_key == "5":
+        target_dt = now + timedelta(minutes=5)
+    elif time_key == "15":
+        target_dt = now + timedelta(minutes=15)
+    elif time_key == "60":
+        target_dt = now + timedelta(minutes=60)
+    elif time_key == "180":
+        target_dt = now + timedelta(minutes=180)
+    elif time_key == "tom9":
+        tomorrow = now + timedelta(days=1)
+        target_dt = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+    else:
+        target_dt = now + timedelta(minutes=10)
+
+    iso_time = target_dt.isoformat()
+    rem = reminder_manager.add_reminder(
+        task=task_name,
+        rem_datetime_iso=iso_time,
+        source="manual",
+        target_chat_id=call.message.chat.id
+    )
+
+    display_time = target_dt.strftime("%H:%M (%d-%m-%Y)")
+    userbot_ready = await call_service.is_authorized()
+    userbot_status = "🟢 Ulangan (Telegramdan qo'ng'iroq qilinadi)" if userbot_ready else "⚠️ Ulanmagan (/userbot orqali ulang)"
+
+    confirm_text = (
+        "✅ <b>ESLATMA VA QO'NG'IROQ SAQLANDI!</b>\n\n"
+        f"📝 <b>Vazifa:</b> <blockquote>{html.escape(task_name)}</blockquote>\n"
+        f"⏰ <b>Vaqti:</b> <b>{display_time} (Toshkent vaqti)</b>\n"
+        f"📞 <b>Qo'ng'iroq tizimi:</b> {userbot_status}\n\n"
+        "<i>Belgilangan daqiqada bot sizga avtomatik qo'ng'iroq qiladi va eslatadi!</i>"
+    )
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ O'chirish", callback_data=f"rem_cancel_{rem['id']}")],
+            [InlineKeyboardButton(text="📋 Barcha eslatmalarim", callback_data="show_reminders")]
+        ]
+    )
+    await call.message.edit_text(confirm_text, parse_mode="HTML", reply_markup=markup)
+    await call.answer("Eslatma saqlandi!")
+
 
 
 @dp.callback_query(F.data.startswith("rem_done_"))
