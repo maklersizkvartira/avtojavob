@@ -280,17 +280,53 @@ async def on_business_message(message: Message):
     sender = message.from_user
     chat_id = message.chat.id
 
-    conns = bot_data.get("connections", {})
-    conn_info = conns.get(conn_id, {})
-    owner_id = conn_info.get("owner_id")
-    owner_name = conn_info.get("owner_name") or (get_user_name(owner_id, "Akkaunt egasi") if owner_id else "Akkaunt egasi")
+    conns = bot_data.setdefault("connections", {})
+    conn_info = conns.get(conn_id)
+    if not conn_info or not conn_info.get("owner_id"):
+        try:
+            bus_conn = await bot.get_business_connection(conn_id)
+            if bus_conn and bus_conn.user:
+                o_id = bus_conn.user.id
+                o_name = get_user_name(o_id, bus_conn.user.first_name)
+                conns[conn_id] = {
+                    "owner_id": o_id,
+                    "owner_chat_id": bus_conn.user_chat_id,
+                    "owner_name": o_name,
+                    "owner_username": bus_conn.user.username,
+                }
+                save_data(bot_data)
+                conn_info = conns[conn_id]
+        except Exception as e:
+            logger.debug(f"get_business_connection tekshirish: {e}")
+
+    owner_id = conn_info.get("owner_id") if conn_info else None
+    owner_name = conn_info.get("owner_name") if conn_info else (get_user_name(owner_id, "Akkaunt egasi") if owner_id else "Akkaunt egasi")
 
     # ========================================================
     # 🎯 AGAR XABARNI HISOB EGASI (SIZ) YOZSANGLIZ:
-    # Egasi onlayn va chatga kirdi! Bot avtojavoblarni tozalaydi!
+    # Egasi o'zi yozganda AI mutlaqo javob bermaydi! Bot avtojavoblarni tozalaydi!
     # ========================================================
-    if (owner_id and sender.id == owner_id) or (OWNER_ID and str(sender.id) == str(OWNER_ID)):
-        logger.info(f"Akkaunt egasi ({owner_name}) yozdi. Avvalgi bot xabarlari tozalanadi...")
+    is_from_owner = False
+
+    # 1. Telegram Business 1-ga-1 chatlarida chat_id — bu mijozning ID si.
+    # Agar sender.id != chat_id bo'lsa -> bu xabarni hisob egasi (siz) yozgansiz!
+    if sender.id != chat_id:
+        is_from_owner = True
+
+    # 2. Agar yuboruvchi ulanish egasiga teng bo'lsa
+    if owner_id and str(sender.id) == str(owner_id):
+        is_from_owner = True
+
+    # 3. Agar yuboruvchi adminlar ro'yxatida bo'lsa
+    if sender.id in bot_data.get("admins", []):
+        is_from_owner = True
+
+    # 4. Agar .env dagi OWNER_ID ga teng bo'lsa
+    if OWNER_ID and str(sender.id) == str(OWNER_ID):
+        is_from_owner = True
+
+    if is_from_owner:
+        logger.info(f"Akkaunt egasi ({sender.full_name}) mijozga o'zi xabar yozdi. Bot javob bermaydi!")
         await cleanup_chat_messages(conn_id, chat_id)
         return
 
@@ -298,7 +334,7 @@ async def on_business_message(message: Message):
     if sender.is_bot:
         return
 
-    logger.info(f"📩 Biznes xabar: '{message.text}' | Yuboruvchi: {sender.full_name} | Chat: {chat_id} | Ega: {owner_name}")
+    logger.info(f"📩 Mijoz savoli: '{message.text}' | Mijoz: {sender.full_name} | Chat: {chat_id} | Ega: {owner_name}")
 
     # ========================================================
     # 🎯 AGAR EGASI HOZIR "ONLINE" HOLATDA BO'LSA:
