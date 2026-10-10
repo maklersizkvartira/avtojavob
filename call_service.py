@@ -60,7 +60,31 @@ class CallService:
             logger.warning(f"Avtorizatsiya tekshirishda xatolik: {e}")
             return False
 
+    async def logout(self) -> bool:
+        """Userbot sessiyasini uzish va o'chirish."""
+        try:
+            if self.client:
+                try:
+                    if self.client.is_connected() and await self.client.is_user_authorized():
+                        await self.client.log_out()
+                    await self.client.disconnect()
+                except Exception:
+                    pass
+            self.client = None
+            for ext in [".session", ".session-journal"]:
+                fpath = f"{SESSION_FILE}{ext}"
+                if os.path.exists(fpath):
+                    try:
+                        os.remove(fpath)
+                    except Exception:
+                        pass
+            return True
+        except Exception as e:
+            logger.error(f"Logout error: {e}")
+            return False
+
     async def get_me(self):
+
         """Userbot egasining ma'lumotlarini olish."""
         if await self.is_authorized():
             return await self.client.get_me()

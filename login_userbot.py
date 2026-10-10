@@ -27,10 +27,25 @@ async def main():
 
     if await client.is_user_authorized():
         me = await client.get_me()
-        print(f"✅ Akkaunt allaqachon ulangan: {me.first_name} (@{me.username})")
-        print("Hech narsa qilish shart emas. Botni ishga tushirishingiz mumkin!")
-        await client.disconnect()
-        return
+        print(f"✅ Hozir ulangan akkaunt: {me.first_name} (@{me.username})")
+        ans = input("Ushbu akkauntni uzib, BOSHQA RAQAM ulaysizmi? (ha / yo'q): ").strip().lower()
+        if ans in ["ha", "yes", "y", "1"]:
+            await client.log_out()
+            await client.disconnect()
+            for ext in [".session", ".session-journal"]:
+                fpath = f"{SESSION_NAME}{ext}"
+                if os.path.exists(fpath):
+                    try:
+                        os.remove(fpath)
+                    except Exception:
+                        pass
+            print("🗑 Eski akkaunt uzildi. Endi yangi raqamingizni kiritishingiz mumkin:\n")
+            client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+            await client.connect()
+        else:
+            print("Jarayon bekor qilindi. Hozirgi akkaunt saqlab qolindi.")
+            await client.disconnect()
+            return
 
     phone = input("📱 Telefon raqamingizni kiriting (masalan: +998901234567): ").strip()
     result = await client.send_code_request(phone)

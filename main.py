@@ -840,15 +840,17 @@ async def cb_userbot_settings(event: CallbackQuery | Message):
     if is_auth:
         me = await call_service.get_me()
         user_str = f"@{me.username}" if me and me.username else (me.first_name if me else "Faol")
+        phone_str = f"({me.phone})" if me and me.phone else ""
         text = (
             "⚙️ <b>TELEGRAM USERBOT SOZLAMALARI</b>\n\n"
             f"🟢 <b>Holat:</b> Faol va ulangan!\n"
-            f"👤 <b>Userbot profili:</b> {html.escape(user_str)}\n\n"
+            f"👤 <b>Userbot profili:</b> {html.escape(user_str)} {phone_str}\n\n"
             "📞 Bot muhim eslatmalar vaqtida ushbu profil orqali sizga avtomatik ovozli qo'ng'iroq qiladi."
         )
         markup = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="📞 Sinov qo'ng'irog'i qilish", callback_data="test_call_btn")],
+                [InlineKeyboardButton(text="🔄 Akkauntni uzish (Boshqa raqam ulash)", callback_data="logout_userbot_btn")],
                 [InlineKeyboardButton(text="🔙 Bosh menyu", callback_data="settings_back")]
             ]
         )
@@ -873,6 +875,25 @@ async def cb_userbot_settings(event: CallbackQuery | Message):
         await event.answer()
     else:
         await event.reply(text, parse_mode="HTML", reply_markup=markup)
+
+
+@dp.callback_query(F.data == "logout_userbot_btn")
+async def cb_userbot_logout(call: CallbackQuery, state: FSMContext):
+    await call_service.logout()
+    await state.clear()
+    await call.message.reply(
+        "🗑 <b>Eski akkaunt muvaffaqiyatli uzildi!</b>\n\n"
+        "Endi yangi (ikkinchi) raqamingizni kiritish uchun quyidagi tugmani bosing yoki to'g'ridan-to'g'ri yangi raqamingizni yozib yuboring:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📱 Yangi raqamni ulash", callback_data="start_userbot_login")],
+                [InlineKeyboardButton(text="🔙 Bosh menyu", callback_data="settings_back")]
+            ]
+        )
+    )
+    await call.answer("Akkaunt uzildi!")
+
 
 
 @dp.callback_query(F.data == "start_userbot_login")
