@@ -45,8 +45,35 @@ Siz taqdim etgan OpenAI API kaliti tekshirilganda, unda **kredit/balans tugaganl
 
 ---
 
+---
+
+## 📞 Avtomatik Qo'ng'iroq va Aqlli Eslatmalar Tizimi (YANGI!):
+
+Botga muhim ishlarni belgilab qo'yganingizda, belgilangan daqiqada **botning o'zi sizga avtomatik tarzda Telegram orqali telefon qiladi** va ogohlantiradi:
+
+### 1. Qo'lda Eslatma / Qo'ng'iroq belgilash:
+- Bot menyusidagi **«➕ Yangi eslatma»** tugmasini bosing yoki `/eslatma` buyrug'ini yuboring.
+- Shunchaki tabiiy tilda yozing:
+  - *«Ertaga soat 15:30 da Ali aka bilan uchrashuv»*
+  - *«15 minutdan keyin dori ichish»*
+  - *«Bugun 19:00 da hisobotni jo'natish»*
+- Sun'iy intellekt (AI) vaqtni o'zi aniqlab, jadvalga kiritadi.
+
+### 2. AI Avtomatik Aniqlash (Mijozlar bilan suhbatda):
+- Mijoz sizning Telegram profilingizga yozganda (*masalan: «Ertaga soat 14:00 da ofisingizga boraman»*), AI buni sezadi va egasiga xabar beradi hamda sizga avtomatik qo'ng'iroq qilish jadvaliga qo'shadi!
+
+### 3. Telegram orqali Qo'ng'iroq qilishni ulash (Userbot):
+Telegram botlari rasman to'g'ridan-to'g'ri telefon qila olmagani sababli, tizimga **Userbot** integratsiya qilingan:
+- Botda `/userbot` buyrug'ini bosing yoki menyudan **«⚙️ Userbot sozlamalari»** ni tanlang.
+- Telefon raqamingizni va Telegramdan kelgan kodni kiriting.
+- Sinab ko'rish uchun **«📞 Sinov qo'ng'irog'i (Test Call)»** yoki `/testcall` buyrug'ini bosing!
+
+---
+
 ## 📁 Loyiha Tuzilishi:
-- `main.py` - Telegram Bot va Telegram Business updatelarini qabul qiluvchi asosiy dastur.
-- `ai_service.py` - OpenAI ChatGPT integratsiyasi va suhbat tarixini (kontekst) saqlovchi modul.
-- `.env` - Bot tokeni va OpenAI kaliti sozlamalari.
+- `main.py` - Telegram Bot va Telegram Business boshqaruvi, eslatmalar qayta ishlovchisi.
+- `reminders_service.py` - Eslatmalar jadvali va fon tekshiruvi (Scheduler).
+- `call_service.py` - Telegram VoIP / Userbot orqali qo'ng'iroq chaqiruvi moduli.
+- `ai_service.py` - OpenAI ChatGPT integratsiyasi, matn tahlili va eslatma parsingi.
+- `.env` - Bot tokeni, AI API kaliti va Userbot sozlamalari.
 - `requirements.txt` - Kerakli kutubxonalar ro'yxati.

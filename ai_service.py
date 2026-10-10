@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from collections import defaultdict
@@ -127,3 +128,85 @@ class AIService:
         except Exception as e:
             logger.error(f"AI javob olishda xatolik: {e}")
             return f"Assalomu alaykum! Xabaringiz {self.owner_name}ga yetkazildi, tez orada javob qaytaramiz."
+
+    async def parse_natural_reminder(self, reminder_text: str, current_time_str: str) -> dict:
+        """
+        Foydalanuvchi kiritgan tabiiy matndan (masalan: 'ertaga soat 15:00 da Ali bilan uchrashuv')
+        aniq sana, vaqt va vazifa nomini ajratib oladi.
+        """
+        prompt = (
+            f"Joriy sana va vaqt: {current_time_str} (Toshkent vaqti, UTC+5).\n"
+            f"Foydalanuvchi eslatma so'radi: \"{reminder_text}\"\n\n"
+            f"Vazifangiz:\n"
+            f"1. Eslatma qaysi sana va vaqtga belgilanganini hisoblang (masalan, 'ertaga', '10 minutdan keyin', 'bugun 18:00' va h.k.).\n"
+            f"2. Vazifa sarlavhasini lo'nda qilib ajrating.\n"
+            f"3. Natijani FAQAT quyidagi JSON formatida qaytaring, boshqa hech qanday so'z qo'shmang:\n"
+            f"{{\n"
+            f'  "success": true,\n'
+            f'  "task": "Vazifa nomi",\n'
+            f'  "datetime_iso": "YYYY-MM-DDTHH:MM:SS"\n'
+            f"}}\n"
+            f"Agar vaqtni mutlaqo aniqlab bo'lmasa:\n"
+            f'{{"success": false, "task": "", "datetime_iso": "", "error": "Vaqt tushunarsiz"}}\n'
+        )
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "Siz qat'iy ravishda faqat toza JSON formatida javob beruvchi yordamchisiz."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=200,
+            )
+            raw = response.choices[0].message.content.strip()
+            # JSON formatini tozalash (agar ```json ... ``` bilan kelsa)
+            if "```" in raw:
+                raw = re.sub(r'```json\s*|\s*```', '', raw).strip()
+            data = json.loads(raw)
+            return data
+        except Exception as e:
+            logger.warning(f"Natural reminder parse error: {e}")
+            return {"success": False, "task": reminder_text, "datetime_iso": "", "error": str(e)}
+
+    async def detect_schedule_in_chat(self, user_msg: str, bot_reply: str, current_time_str: str) -> dict:
+        """
+        Mijoz bilan yozishmada uchrashuv, kelishuv, qo'ng'iroq qilish vaqti mavjudligini aniqlaydi.
+        """
+        prompt = (
+            f"Joriy sana va vaqt: {current_time_str} (Toshkent vaqti, UTC+5).\n"
+            f"Mijoz xabari: \"{user_msg}\"\n"
+            f"Yordamchi javobi: \"{bot_reply}\"\n\n"
+            f"Vazifa: Ushbu suhbatda mijoz yoki yordamchi o'rtasida aniq kelishuv, uchrashuv yoki qo'ng'iroqlashish vaqti bormi?\n"
+            f"(Masalan: 'Ertaga 15:00 da kelaman', 'Bugun 18:00 da gaplashamiz', 'Dushanba soat 10 da eslatib yuboring').\n\n"
+            f"Agar aniq vaqtli kelishuv/uchrashuv bo'lsa, FAQAT quyidagi JSON formatida javob bering:\n"
+            f"{{\n"
+            f'  "has_schedule": true,\n'
+            f'  "task": "Uchrashuv/bog\'lanish maqsadi",\n'
+            f'  "datetime_iso": "YYYY-MM-DDTHH:MM:SS",\n'
+            f'  "summary": "Qisqa izoh"\n'
+            f"}}\n"
+            f"Agar aniq vaqtli kelishuv bo'lmasa, FAQAT:\n"
+            f'{{"has_schedule": false}}\n'
+        )
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "Siz qat'iy ravishda faqat toza JSON formatida javob beruvchi yordamchisiz."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=250,
+            )
+            raw = response.choices[0].message.content.strip()
+            if "```" in raw:
+                raw = re.sub(r'```json\s*|\s*```', '', raw).strip()
+            data = json.loads(raw)
+            return data
+        except Exception as e:
+            logger.debug(f"Schedule detection error: {e}")
+            return {"has_schedule": False}
+
