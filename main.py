@@ -716,12 +716,14 @@ async def process_reminder_text_common(message: Message, text: str, state: FSMCo
 
         quick_buttons = [
             [
-                InlineKeyboardButton(text="⏱ 5 daqiqadan so'ng", callback_data="qtime_5"),
-                InlineKeyboardButton(text="⏱ 15 daqiqadan so'ng", callback_data="qtime_15")
+                InlineKeyboardButton(text="⚡️ 1 daqiqadan so'ng", callback_data="qtime_1"),
+                InlineKeyboardButton(text="⏱ 3 daqiqadan so'ng", callback_data="qtime_3"),
+                InlineKeyboardButton(text="⏱ 5 daqiqadan so'ng", callback_data="qtime_5")
             ],
             [
-                InlineKeyboardButton(text="⏰ 1 soatdan so'ng", callback_data="qtime_60"),
-                InlineKeyboardButton(text="⏰ 3 soatdan so'ng", callback_data="qtime_180")
+                InlineKeyboardButton(text="⏱ 15 daqiqadan so'ng", callback_data="qtime_15"),
+                InlineKeyboardButton(text="⏰ 30 daqiqadan so'ng", callback_data="qtime_30"),
+                InlineKeyboardButton(text="⏰ 1 soatdan so'ng", callback_data="qtime_60")
             ],
             [
                 InlineKeyboardButton(text="🌅 Ertaga 09:00 da", callback_data="qtime_tom9"),
@@ -778,10 +780,16 @@ async def cb_quick_time_reminder(call: CallbackQuery):
     task_name = bot_data.get("temp_tasks", {}).get(str(call.message.chat.id), "Muhim vazifa")
 
     now = get_now()
-    if time_key == "5":
+    if time_key == "1":
+        target_dt = now + timedelta(minutes=1)
+    elif time_key == "3":
+        target_dt = now + timedelta(minutes=3)
+    elif time_key == "5":
         target_dt = now + timedelta(minutes=5)
     elif time_key == "15":
         target_dt = now + timedelta(minutes=15)
+    elif time_key == "30":
+        target_dt = now + timedelta(minutes=30)
     elif time_key == "60":
         target_dt = now + timedelta(minutes=60)
     elif time_key == "180":
@@ -790,7 +798,8 @@ async def cb_quick_time_reminder(call: CallbackQuery):
         tomorrow = now + timedelta(days=1)
         target_dt = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
     else:
-        target_dt = now + timedelta(minutes=10)
+        target_dt = now + timedelta(minutes=1)
+
 
     iso_time = target_dt.isoformat()
     rem = reminder_manager.add_reminder(

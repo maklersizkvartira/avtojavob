@@ -14,6 +14,19 @@ def get_now() -> datetime:
     """Toshkent vaqti (UTC+5)."""
     return datetime.now(TZ_TASHKENT).replace(tzinfo=None)
 
+def safe_parse_dt(dt_str: str) -> Optional[datetime]:
+    """Sanani xavfsiz o'qib, Toshkent vaqti (naive) formatiga keltiradi."""
+    if not dt_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(dt_str)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(TZ_TASHKENT).replace(tzinfo=None)
+        return dt
+    except Exception:
+        return None
+
+
 
 class ReminderManager:
     def __init__(self, data_getter: Callable[[], dict], data_saver: Callable[[dict], None]):
@@ -117,20 +130,19 @@ class ReminderManager:
                 for rem in reminders:
                     if rem.get("status") == "pending":
                         dt_str = rem.get("datetime_iso")
-                        if not dt_str:
-                            continue
-                        try:
-                            rem_dt = datetime.fromisoformat(dt_str)
-                        except Exception:
+                        rem_dt = safe_parse_dt(dt_str)
+                        if rem_dt is None:
                             continue
 
                         # Agar vaqti yetgan yoki o'tgan bo'lsa
                         if now >= rem_dt:
+                            logger.info(f"⏰ Eslatma vaqti keldi! ID: {rem.get('id')} Vazifa: {rem.get('task')}")
                             rem["status"] = "triggered"
                             rem["triggered_at"] = now.isoformat()
                             has_updates = True
                             # Eslatma va qo'ng'iroq chaqiruvini bajarish
                             asyncio.create_task(on_trigger_callback(rem))
+
 
                 if has_updates:
                     self.data_saver(data)
