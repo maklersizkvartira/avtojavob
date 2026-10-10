@@ -56,8 +56,8 @@ def load_data() -> dict:
     return {
         "connections": {},
         "admins": [],
-        "owner_name": "Zayniddin",
-        "owner_status": "offline",  # "online" yoki "offline"
+        "user_names": {},           # { "user_id": "Ismi" }
+        "owner_statuses": {},       # { "user_id": "online" / "offline" }
         "chat_bot_messages": {},    # { "conn_id_chat_id": [msg_id, ...] }
         "admin_notifications": {}   # { "conn_id_chat_id": [[admin_id, msg_id], ...] }
     }
@@ -70,20 +70,19 @@ def save_data(data: dict):
         logger.error(f"Ma'lumotlar faylini saqlashda xatolik: {e}")
 
 bot_data = load_data()
-bot_data.setdefault("owner_status", "offline")
+bot_data.setdefault("connections", {})
+bot_data.setdefault("admins", [])
+bot_data.setdefault("user_names", {})
+bot_data.setdefault("owner_statuses", {})
 bot_data.setdefault("chat_bot_messages", {})
 bot_data.setdefault("admin_notifications", {})
-if not bot_data.get("owner_name") or bot_data.get("owner_name") == "Akkaunt egasi":
-    bot_data["owner_name"] = "Zayniddin"
-
-current_owner_name = bot_data["owner_name"]
 
 # AI servisini ishga tushirish
 ai_service = AIService(
     api_key=OPENAI_API_KEY,
     model=AI_MODEL,
     base_url=AI_BASE_URL if AI_BASE_URL else None,
-    owner_name=current_owner_name,
+    owner_name="Akkaunt egasi",
     system_prompt=SYSTEM_PROMPT
 )
 
@@ -100,8 +99,36 @@ class FormStates(StatesGroup):
 
 
 # ==========================================
-# YORDAMCHI VA TOZALASH FUNKSIYALARI
+# HAR BIR FOYDALANUVCHI / EGA ISMI VA HOLATI
 # ==========================================
+
+def get_user_name(user_id: int, fallback: str = "Akkaunt egasi") -> str:
+    """Foydalanuvchi yoki akkaunt egasining shaxsiy ismini olish."""
+    user_str = str(user_id)
+    return bot_data.setdefault("user_names", {}).get(user_str) or fallback
+
+def set_user_name(user_id: int, name: str):
+    """Foydalanuvchi yoki akkaunt egasining ismini saqlash va yangilash."""
+    user_str = str(user_id)
+    clean_name = name.strip()
+    bot_data.setdefault("user_names", {})[user_str] = clean_name
+
+    # Agar ushbu user biznes ulanishiga ega bo'lsa, uning ulanishlaridagi ismni ham yangilaymiz
+    for conn in bot_data.setdefault("connections", {}).values():
+        if conn.get("owner_id") == user_id:
+            conn["owner_name"] = clean_name
+    save_data(bot_data)
+
+def get_user_status(user_id: int) -> str:
+    """Foydalanuvchining onlayn/oflayn holati (default: offline = avtojavob faol)."""
+    user_str = str(user_id)
+    return bot_data.setdefault("owner_statuses", {}).get(user_str, "offline")
+
+def set_user_status(user_id: int, status: str):
+    """Foydalanuvchining onlayn/oflayn holatini saqlash."""
+    user_str = str(user_id)
+    bot_data.setdefault("owner_statuses", {})[user_str] = status
+    save_data(bot_data)
 
 def get_all_target_admins() -> set[int]:
     """Barcha bildirishnoma oluvchi adminlar va hisob egalari ID lari ro'yxatini qaytaradi."""
@@ -139,52 +166,47 @@ async def cleanup_chat_messages(conn_id: str, chat_id: int):
             except Exception as e:
                 logger.debug(f"Mijoz chatidagi xabarni o'chirish: {e}")
         bot_data["chat_bot_messages"][chat_key] = []
+        save_data(bot_data)
 
-    # 2. Admin (bot) chatidagi bildirishnomalarni o'chirish
+    # 2. Admindagi bildirishnoma xabarlarini o'chirish
     admin_notifs = bot_data.get("admin_notifications", {}).get(chat_key, [])
     if admin_notifs:
-        for adm_id, mid in admin_notifs:
+        for adm_id, adm_mid in admin_notifs:
             try:
-                await bot.delete_message(chat_id=adm_id, message_id=mid)
+                await bot.delete_message(chat_id=adm_id, message_id=adm_mid)
                 deleted_admin_count += 1
             except Exception as e:
-                logger.debug(f"Admin chatidagi bildirishnomani o'chirish: {e}")
+                logger.debug(f"Admin bildirishnomasini o'chirish: {e}")
         bot_data["admin_notifications"][chat_key] = []
+        save_data(bot_data)
 
-    save_data(bot_data)
-    if deleted_client_count > 0 or deleted_admin_count > 0:
-        logger.info(
-            f"🧹 Tozalash bajarildi! Mijoz chatidan: {deleted_client_count} ta, "
-            f"Bot chatidan: {deleted_admin_count} ta avtojavob o'chirildi."
-        )
+    logger.info(f"🧹 Tozalandi ({chat_key}): mijozdan {deleted_client_count} ta, admindan {deleted_admin_count} ta xabar.")
 
 
-async def notify_admins(sender, user_msg: str, bot_reply: str, conn_id: str, client_chat_id: int):
-    """Hisob egasiga mijoz haqida hisobot berish."""
-    targets = get_all_target_admins()
-    if not targets:
-        return
+async def notify_admins(
+    sender,
+    user_msg: str,
+    bot_reply: str,
+    conn_id: str,
+    client_chat_id: int,
+    owner_id: int = None
+):
+    """Mijoz yozgan xabar va bot bergan avtojavobni egasiga hisobot qilish."""
+    targets = {owner_id} if owner_id else get_all_target_admins()
 
-    username_str = f"@{sender.username}" if sender.username else "Mavjud emas"
-    if sender.username:
-        user_url = f"https://t.me/{sender.username}"
-        profile_html = f'<a href="{user_url}">@{sender.username}</a> ({html.escape(sender.full_name)})'
-    else:
-        user_url = None
-        profile_html = f'<a href="tg://user?id={sender.id}">{html.escape(sender.full_name)}</a>'
-
-    now_str = datetime.now().strftime("%H:%M:%S")
+    username_str = f"@{sender.username}" if sender.username else f"ID: {sender.id}"
+    user_url = f"https://t.me/{sender.username}" if sender.username else f"tg://user?id={sender.id}"
+    profile_html = f"<a href=\"{user_url}\">{html.escape(sender.full_name)}</a> ({username_str})"
 
     notify_text = (
-        "🔔 <b>DIQQAT! YANGI MUROJAAT KELDI!</b>\n\n"
+        "📩 <b>Yangi mijoz xabari va AI Avtojavobi!</b>\n\n"
         f"👤 <b>Foydalanuvchi:</b> {profile_html}\n"
         f"🆔 <b>ID:</b> <code>{sender.id}</code>\n\n"
-        f"💬 <b>U shunday demoqda:</b>\n"
+        f"💬 <b>Mijoz savoli:</b>\n"
         f"<blockquote>{html.escape(user_msg)}</blockquote>\n\n"
-        f"🤖 <b>AI bergan dastlabki javob:</b>\n"
+        f"🤖 <b>AI bergan javob:</b>\n"
         f"<blockquote>{html.escape(bot_reply)}</blockquote>\n\n"
-        "👉 <i>Siz ushbu xabarga 'Reply' qilib yozsangiz yoki quyidagi tugmani bossangiz, "
-        "javobingiz mijozga yetkaziladi. Chatga kirsangiz, bot xabarlari avtomatik tozalanadi!</i>"
+        "👉 <i>Siz chatga kirsangiz, bot xabarlari avtomatik tarzda tozalanadi!</i>"
     )
 
     buttons = [
@@ -195,11 +217,12 @@ async def notify_admins(sender, user_msg: str, bot_reply: str, conn_id: str, cli
         buttons.append([InlineKeyboardButton(text="💬 Mijoz profilini ochish", url=user_url)])
 
     reply_markup = InlineKeyboardMarkup(inline_keyboard=buttons)
-
     chat_key = f"{conn_id}_{client_chat_id}"
     admin_notif_list = bot_data.setdefault("admin_notifications", {}).setdefault(chat_key, [])
 
     for admin_id in targets:
+        if not admin_id:
+            continue
         try:
             sent_msg = await bot.send_message(
                 chat_id=admin_id,
@@ -230,22 +253,21 @@ async def on_business_connection(connection: BusinessConnection):
     conns = bot_data.setdefault("connections", {})
 
     if connection.is_enabled:
+        owner_name = get_user_name(user.id, user.first_name)
         conns[conn_id] = {
             "owner_id": user.id,
             "owner_chat_id": connection.user_chat_id,
-            "owner_name": user.full_name,
+            "owner_name": owner_name,
             "owner_username": user.username,
         }
-        if not bot_data.get("owner_name") or bot_data.get("owner_name") in ["Akkaunt egasi", "", None]:
-            bot_data["owner_name"] = "Zayniddin"
-            ai_service.set_owner_name("Zayniddin")
+        set_user_name(user.id, owner_name)
 
         admins = bot_data.setdefault("admins", [])
         if user.id not in admins:
             admins.append(user.id)
 
         save_data(bot_data)
-        logger.info(f"✅ Yangi biznes ulanish! {user.full_name} (ID: {user.id})")
+        logger.info(f"✅ Yangi biznes ulanish! {owner_name} (ID: {user.id})")
     else:
         conns.pop(conn_id, None)
         save_data(bot_data)
@@ -261,13 +283,14 @@ async def on_business_message(message: Message):
     conns = bot_data.get("connections", {})
     conn_info = conns.get(conn_id, {})
     owner_id = conn_info.get("owner_id")
+    owner_name = conn_info.get("owner_name") or (get_user_name(owner_id, "Akkaunt egasi") if owner_id else "Akkaunt egasi")
 
     # ========================================================
     # 🎯 AGAR XABARNI HISOB EGASI (SIZ) YOZSANGLIZ:
     # Egasi onlayn va chatga kirdi! Bot avtojavoblarni tozalaydi!
     # ========================================================
     if (owner_id and sender.id == owner_id) or (OWNER_ID and str(sender.id) == str(OWNER_ID)):
-        logger.info(f"Akkaunt egasi ({sender.full_name}) yozdi. Avvalgi bot xabarlari tozalanadi...")
+        logger.info(f"Akkaunt egasi ({owner_name}) yozdi. Avvalgi bot xabarlari tozalanadi...")
         await cleanup_chat_messages(conn_id, chat_id)
         return
 
@@ -275,16 +298,15 @@ async def on_business_message(message: Message):
     if sender.is_bot:
         return
 
-    logger.info(f"📩 Biznes xabar: '{message.text}' | Yuboruvchi: {sender.full_name} | Chat: {chat_id}")
+    logger.info(f"📩 Biznes xabar: '{message.text}' | Yuboruvchi: {sender.full_name} | Chat: {chat_id} | Ega: {owner_name}")
 
     # ========================================================
     # 🎯 AGAR EGASI HOZIR "ONLINE" HOLATDA BO'LSA:
     # Bot mijozga avtojavob yozmaydi, faqat egasiga xabar yetkazadi!
     # ========================================================
-    is_owner_online = (bot_data.get("owner_status") == "online")
+    is_owner_online = (get_user_status(owner_id) == "online") if owner_id else False
     if is_owner_online:
-        logger.info(f"Hisob egasi ONLAYN holatda. Avtojavob yuborilmadi, faqat hisobot beriladi.")
-        # Egasiga shunchaki bildirishnoma tashlaymiz
+        logger.info(f"Hisob egasi ({owner_name}) ONLAYN holatda. Avtojavob yuborilmadi, faqat hisobot beriladi.")
         username_str = f"@{sender.username}" if sender.username else f"ID: {sender.id}"
         notify_msg = (
             f"🟢 <b>Yangi xabar keldi!</b> (Siz Onlaynsiz)\n\n"
@@ -300,8 +322,7 @@ async def on_business_message(message: Message):
         return
 
     # ========================================================
-    # 🎯 EGASI OFLAYN BO'LGANDA:
-    # Bot samimiy avtojavob beradi va xabarni eslab qoladi!
+    # 🎯 AI ORQALI TO'G'RI VA AQLLI AVTOJAVOB BERISH
     # ========================================================
     try:
         await bot.send_chat_action(
@@ -316,7 +337,8 @@ async def on_business_message(message: Message):
     reply_text = await ai_service.get_reply(
         chat_key=chat_key,
         user_message=message.text,
-        sender_name=sender.full_name
+        sender_name=sender.full_name,
+        owner_name=owner_name
     )
 
     try:
@@ -343,7 +365,8 @@ async def on_business_message(message: Message):
         user_msg=message.text,
         bot_reply=reply_text,
         conn_id=conn_id,
-        client_chat_id=chat_id
+        client_chat_id=chat_id,
+        owner_id=owner_id
     )
 
 
@@ -356,34 +379,35 @@ async def on_deleted_business_messages(event: BusinessMessagesDeleted):
 # 2. SOZLAMALAR VA ONLAYN/OFLAYN REJIM
 # ==========================================
 
-def get_settings_keyboard() -> InlineKeyboardMarkup:
-    status = bot_data.get("owner_status", "offline")
+def get_settings_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    status = get_user_status(user_id)
     status_text = "🟢 Holat: ONLAYN (Avtojavob to'xtatilgan)" if status == "online" else "🔴 Holat: OFLAYN (Avtojavob yoqiq)"
-    toggle_data = "set_offline" if status == "online" else "set_online"
+    toggle_data = f"set_offline_{user_id}" if status == "online" else f"set_online_{user_id}"
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=f"🔄 {status_text}", callback_data=toggle_data)],
-            [InlineKeyboardButton(text="✏️ Ega ismini o'zgartirish", callback_data="change_owner_name")],
+            [InlineKeyboardButton(text="✏️ Ismimni o'zgartirish", callback_data="change_owner_name")],
             [InlineKeyboardButton(text="🧹 Barcha avtojavoblarni tozalash", callback_data="clean_all_now")],
             [InlineKeyboardButton(text="📊 Holatni tekshirish", callback_data="check_status")]
         ]
     )
 
 
-@dp.callback_query(F.data.in_(["set_online", "set_offline"]))
+@dp.callback_query(F.data.startswith("set_online_") | F.data.startswith("set_offline_"))
 async def cb_toggle_status(call: CallbackQuery):
-    new_status = "online" if call.data == "set_online" else "offline"
-    bot_data["owner_status"] = new_status
-    save_data(bot_data)
+    user_id = call.from_user.id
+    new_status = "online" if "set_online_" in call.data else "offline"
+    set_user_status(user_id, new_status)
+
+    user_name = get_user_name(user_id, call.from_user.first_name)
 
     if new_status == "online":
         text = (
-            "🟢 <b>Siz ONLAYN rejimiga o'tdingiz!</b>\n\n"
-            "• Endi yangi kelgan xabarlarga bot avtojavob bermaydi (o'zingiz javob berishingiz mumkin).\n"
-            "• Oflayn paytidagi barcha eski bot xabarlari tozalanadi!"
+            f"🟢 <b>{html.escape(user_name)}, siz ONLAYN rejimiga o'tdingiz!</b>\n\n"
+            "• Yangi kelgan xabarlarga bot avtojavob bermaydi (o'zingiz bemalol javob berishingiz mumkin).\n"
+            "• Oflayn paytidagi barcha eski bot avtojavoblari tozalanadi!"
         )
-        # Barcha mavjud avtojavoblarni tozalab tashlaymiz
         for chat_key in list(bot_data.get("chat_bot_messages", {}).keys()):
             try:
                 parts = chat_key.split("_", 1)
@@ -393,12 +417,12 @@ async def cb_toggle_status(call: CallbackQuery):
                 pass
     else:
         text = (
-            "🔴 <b>Siz OFLAYN rejimiga o'tdingiz!</b>\n\n"
-            "• Endi siz yo'qligingizda bot odamlarga sizning nomingizdan samimiy javob berib turadi.\n"
+            f"🔴 <b>{html.escape(user_name)}, siz OFLAYN rejimiga o'tdingiz!</b>\n\n"
+            f"• Endi siz yo'qligingizda bot mijozlarga sizning («{html.escape(user_name)}») nomingizdan AI orqali aqlli javob beradi.\n"
             "• Qachonki chatga kirsangiz, bot o'zi yozgan barcha xabarlarni avtomatik o'chirib beradi!"
         )
 
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_settings_keyboard())
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_settings_keyboard(user_id))
     await call.answer()
 
 
@@ -413,7 +437,7 @@ async def cb_clean_all(call: CallbackQuery):
                 count += 1
         except Exception:
             pass
-    await call.answer(f"Barcha chatlardagi bot avtojavoblari tozalandi!", show_alert=True)
+    await call.answer("Barcha chatlardagi bot avtojavoblari tozalandi!", show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("clean_"))
@@ -430,9 +454,12 @@ async def cb_clean_single_chat(call: CallbackQuery):
 @dp.callback_query(F.data == "change_owner_name")
 async def cb_change_owner_name(call: CallbackQuery, state: FSMContext):
     await state.set_state(FormStates.waiting_for_owner_name)
+    current_name = get_user_name(call.from_user.id, call.from_user.first_name)
     await call.message.reply(
-        "✍️ <b>O'z ismingizni yoki brend nomingizni yozib yuboring:</b>\n\n"
-        "<i>(Masalan: Sardor, Asadbek, Maklersiz Kvartira va h.k.)</i>",
+        f"✍️ <b>Hozirgi ismingiz:</b> «{html.escape(current_name)}»\n\n"
+        "O'zingizning haqiqiy ismingizni yoki brend nomingizni yozib yuboring:\n"
+        "<i>(Masalan: Zayniddin, Sardor, Asadbek, Maklersiz Kvartira va h.k.)</i>\n\n"
+        "Bot barcha mijozlarga aynan siz kiritgan ism nomidan javob beradi va 'Egang kim?' deb so'ralsa shu ismni aytadi!",
         parse_mode="HTML"
     )
     await call.answer()
@@ -445,15 +472,15 @@ async def process_new_owner_name(message: Message, state: FSMContext):
         await message.reply("Iltimos, haqiqiy ism kiriting.")
         return
 
-    bot_data["owner_name"] = new_name
-    save_data(bot_data)
-    ai_service.set_owner_name(new_name)
+    set_user_name(message.from_user.id, new_name)
     await state.clear()
 
     await message.reply(
-        f"✅ <b>Ega ismi saqlandi: «{html.escape(new_name)}»!</b>",
+        f"🎉 <b>Muvaffaqiyatli saqlandi!</b>\n\n"
+        f"Endi bot barcha savollarga aynan sizning — <b>«{html.escape(new_name)}»</b> nomingizdan "
+        "AI orqali aqlli va to'g'ri javob qaytaradi!",
         parse_mode="HTML",
-        reply_markup=get_settings_keyboard()
+        reply_markup=get_settings_keyboard(message.from_user.id)
     )
 
 
@@ -461,44 +488,54 @@ async def process_new_owner_name(message: Message, state: FSMContext):
 async def cmd_setname(message: Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.reply("ℹ️ <b>Foydalanish:</b> <code>/setname Sizning_Ismingiz</code>", parse_mode="HTML")
+        current_name = get_user_name(message.from_user.id, message.from_user.first_name)
+        await message.reply(
+            f"ℹ️ <b>Hozirgi ismingiz:</b> «{html.escape(current_name)}»\n\n"
+            "O'zgartirish uchun: <code>/setname Sizning_Ismingiz</code>",
+            parse_mode="HTML"
+        )
         return
 
     new_name = args[1].strip()
-    bot_data["owner_name"] = new_name
-    save_data(bot_data)
-    ai_service.set_owner_name(new_name)
-    await message.reply(f"✅ <b>Ega ismi o'rnatildi: «{html.escape(new_name)}»!</b>", parse_mode="HTML")
+    set_user_name(message.from_user.id, new_name)
+    await message.reply(
+        f"✅ <b>Ismingiz o'rnatildi: «{html.escape(new_name)}»!</b>\n"
+        f"Endi bot sizning nomingizdan to'liq ish olib boradi.",
+        parse_mode="HTML"
+    )
 
 
 @dp.message(Command("settings"))
 async def cmd_settings(message: Message):
-    current_name = ai_service.owner_name
-    status = bot_data.get("owner_status", "offline")
+    user_id = message.from_user.id
+    current_name = get_user_name(user_id, message.from_user.first_name)
+    status = get_user_status(user_id)
     status_badge = "🟢 ONLAYN" if status == "online" else "🔴 OFLAYN (Avtojavob faol)"
 
     text = (
         "⚙️ <b>SOZLAMALAR VA BOSHQARUV PANELI</b>\n\n"
-        f"👑 <b>Ega Ismi:</b> <code>{html.escape(current_name)}</code>\n"
+        f"👑 <b>Sizning Ismingiz:</b> <code>{html.escape(current_name)}</code>\n"
         f"⚡ <b>Hozirgi Holat:</b> <b>{status_badge}</b>\n"
         f"🤖 <b>AI Modeli:</b> <code>{ai_service.model}</code>\n"
         f"🔗 <b>Telegram Business:</b> Faol\n\n"
-        "<i>Quyidagi tugmalar orqali holatingizni o'zgartirishingiz mumkin:</i>"
+        "<i>Quyidagi tugmalar orqali holatingizni yoki ismingizni o'zgartirishingiz mumkin:</i>"
     )
-    await message.answer(text, parse_mode="HTML", reply_markup=get_settings_keyboard())
+    await message.answer(text, parse_mode="HTML", reply_markup=get_settings_keyboard(user_id))
 
 
 @dp.callback_query(F.data == "check_status")
 async def cb_check_status(call: CallbackQuery):
     me = await bot.get_me()
+    user_id = call.from_user.id
     active_count = len(bot_data.get("connections", {}))
-    status = bot_data.get("owner_status", "offline")
+    status = get_user_status(user_id)
     status_badge = "🟢 ONLAYN" if status == "online" else "🔴 OFLAYN"
+    current_name = get_user_name(user_id, call.from_user.first_name)
 
     status_text = (
         f"📊 <b>Bot Holati:</b>\n\n"
         f"🤖 Bot: @{me.username} ({me.first_name})\n"
-        f"👑 Ega Ismi: <b>{html.escape(ai_service.owner_name)}</b>\n"
+        f"👑 Ismingiz: <b>{html.escape(current_name)}</b>\n"
         f"⚡ Holat: <b>{status_badge}</b>\n"
         f"🔗 Telegram Business ulanishlar: <b>{active_count} ta</b>\n"
         f"🟢 Server: <b>Online</b>"
@@ -528,45 +565,47 @@ async def cb_start_reply(call: CallbackQuery, state: FSMContext):
     )
 
     await call.message.reply(
-        f"✍️ <b>{html.escape(info['client_name'])}</b> ga javob yozing:\n"
-        "<i>(Xabar yuborishingiz bilan u mijozga boradi va avtojavoblar tozalanadi)</i>",
+        f"✍️ <b>{html.escape(info['client_name'])}</b>ga yuboriladigan xabaringizni yozing:\n\n"
+        "<i>(Ushbu xabar to'g'ridan-to'g'ri uning chatiga bot orqali yetkaziladi)</i>",
         parse_mode="HTML"
     )
     await call.answer()
 
 
 @dp.message(FormStates.waiting_for_reply, F.text)
-async def process_admin_reply_state(message: Message, state: FSMContext):
+async def process_manual_reply(message: Message, state: FSMContext):
     data = await state.get_data()
     conn_id = data.get("conn_id")
     client_chat_id = data.get("client_chat_id")
-    client_name = data.get("client_name", "Mijoz")
+    client_name = data.get("client_name")
+
+    await state.clear()
 
     try:
-        await bot.send_message(
+        sent_msg = await bot.send_message(
             chat_id=client_chat_id,
             text=message.text,
             business_connection_id=conn_id
         )
+
+        stored_key = f"{conn_id}_{client_chat_id}"
+        bot_msgs = bot_data.setdefault("chat_bot_messages", {}).setdefault(stored_key, [])
+        bot_msgs.append(sent_msg.message_id)
+        save_data(bot_data)
+
         await message.reply(
-            f"✅ <b>Javobingiz {html.escape(client_name)} ga yetkazildi!</b>\n\n"
-            f"<i>Yuborilgan:</i> «{html.escape(message.text)}»",
+            f"✅ Xabaringiz <b>{html.escape(client_name)}</b>ga muvaffaqiyatli yetkazildi!",
             parse_mode="HTML"
         )
-        # Javob yozilgach, avvalgi vaqtinchalik avtojavoblar tozalanadi
-        await cleanup_chat_messages(conn_id, client_chat_id)
     except Exception as e:
-        await message.reply(f"❌ Xabar yuborishda xatolik yuz berdi: {e}")
-
-    await state.clear()
+        logger.error(f"Xabar yuborishda xatolik: {e}")
+        await message.reply(f"❌ Xabarni yetkazishda xatolik: {e}")
 
 
 @dp.message(F.reply_to_message, F.text)
-async def process_admin_direct_reply(message: Message):
-    """Admin bildirishnoma xabariga 'Reply' qilib yozganida."""
-    replied_msg_id = message.reply_to_message.message_id
-    info = notification_map.get(replied_msg_id)
-
+async def process_reply_via_telegram_native(message: Message):
+    orig_msg_id = message.reply_to_message.message_id
+    info = notification_map.get(orig_msg_id)
     if not info:
         return
 
@@ -575,18 +614,23 @@ async def process_admin_direct_reply(message: Message):
     client_name = info["client_name"]
 
     try:
-        await bot.send_message(
+        sent_msg = await bot.send_message(
             chat_id=client_chat_id,
             text=message.text,
             business_connection_id=conn_id
         )
+
+        stored_key = f"{conn_id}_{client_chat_id}"
+        bot_msgs = bot_data.setdefault("chat_bot_messages", {}).setdefault(stored_key, [])
+        bot_msgs.append(sent_msg.message_id)
+        save_data(bot_data)
+
         await message.reply(
-            f"✅ <b>Javobingiz {html.escape(client_name)} ga yetkazildi!</b>",
+            f"✅ Javobingiz <b>{html.escape(client_name)}</b>ga yetkazildi!",
             parse_mode="HTML"
         )
-        # Avtojavoblarni tozalash
-        await cleanup_chat_messages(conn_id, client_chat_id)
     except Exception as e:
+        logger.error(f"Native reply yuborishda xatolik: {e}")
         await message.reply(f"❌ Xabarni yetkazishda xatolik: {e}")
 
 
@@ -601,40 +645,41 @@ async def cmd_start(message: Message):
     if user.id not in admins:
         admins.append(user.id)
 
-    if not bot_data.get("owner_name") or bot_data.get("owner_name") in ["Akkaunt egasi", "", None]:
-        bot_data["owner_name"] = "Zayniddin"
-        ai_service.set_owner_name("Zayniddin")
+    # Agar ushbu foydalanuvchining ismi hali belgilanmagan bo'lsa, Telegramdagi ismini olamiz
+    if str(user.id) not in bot_data.setdefault("user_names", {}):
+        set_user_name(user.id, user.first_name)
 
-    save_data(bot_data)
-
-    current_name = ai_service.owner_name
-    status = bot_data.get("owner_status", "offline")
+    my_name = get_user_name(user.id, user.first_name)
+    status = get_user_status(user.id)
     status_badge = "🟢 ONLAYN" if status == "online" else "🔴 OFLAYN (Avtojavob faol)"
 
     text = (
-        f"👑 <b>Assalomu alaykum, {html.escape(user.first_name)}!</b>\n\n"
-        f"Men sizning (<b>{html.escape(current_name)}</b>ning) <b>Aqlli Shaxsiy Yordamchingizman</b>.\n\n"
+        f"👑 <b>Assalomu alaykum, {html.escape(my_name)}!</b>\n\n"
+        f"Men sizning (<b>{html.escape(my_name)}</b>ning) <b>Aqlli Shaxsiy Yordamchingizman</b>.\n\n"
         "⚡ <b>Avto-Tozalash va Onlayn/Oflayn Tizimi:</b>\n"
+        f"• Sizning ismingiz / brendingiz: <b>{html.escape(my_name)}</b>\n"
         f"• Joriy holatingiz: <b>{status_badge}</b>\n"
-        "• <b>🔴 Oflayn bo'lsangiz:</b> Bot sizning nomingizdan odamlarga javob berib turadi.\n"
+        "• <b>🔴 Oflayn bo'lsangiz:</b> Bot sizning nomingizdan odamlarga AI orqali to'g'ri va aqlli javob beradi.\n"
         "• <b>🟢 Onlayn bo'lsangiz:</b> Chatga kirib o'zingiz yozishingiz bilanoq, bot yozgan barcha avtojavoblar "
         "<b>avtomatik tarzda mijoz chatidan ham, botdan ham o'chib ketadi!</b> Chat toza bo'lib qoladi.\n\n"
-        "Quyidagi tugmalar orqali boshqarishingiz mumkin:"
+        "💡 <i>Ismingizni o'zgartirish uchun «✏️ Ismimni o'zgartirish» tugmasini bosing yoki <code>/setname Yangi_Ism</code> yuboring.</i>"
     )
-    await message.answer(text, parse_mode="HTML", reply_markup=get_settings_keyboard())
+    await message.answer(text, parse_mode="HTML", reply_markup=get_settings_keyboard(user.id))
 
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message):
     me = await bot.get_me()
+    user_id = message.from_user.id
     active_count = len(bot_data.get("connections", {}))
-    status = bot_data.get("owner_status", "offline")
+    status = get_user_status(user_id)
     status_badge = "🟢 ONLAYN" if status == "online" else "🔴 OFLAYN"
+    current_name = get_user_name(user_id, message.from_user.first_name)
 
     status_text = (
         f"📊 <b>Bot Holati:</b>\n\n"
         f"🤖 Bot: @{me.username} ({me.first_name})\n"
-        f"👑 Ega Ismi: <b>{html.escape(ai_service.owner_name)}</b>\n"
+        f"👑 Ismingiz: <b>{html.escape(current_name)}</b>\n"
         f"⚡ Holat: <b>{status_badge}</b>\n"
         f"🔗 Telegram Business: <b>{active_count} ta ulanish</b>\n"
         f"🟢 Server: <b>Online</b>"
@@ -644,17 +689,22 @@ async def cmd_status(message: Message):
 
 @dp.message(F.text)
 async def on_direct_message(message: Message):
+    sender = message.from_user
+    user_name = get_user_name(sender.id, sender.first_name)
+
     await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
     chat_key = f"direct_{message.chat.id}"
+
+    # AI orqali to'g'ridan-to'g'ri savoliga aqlli javob olamiz
     reply = await ai_service.get_reply(
         chat_key=chat_key,
         user_message=message.text,
-        sender_name=message.from_user.full_name
+        sender_name=sender.full_name,
+        owner_name=user_name
     )
     await message.answer(reply)
 
     # Agar xabar tashqi foydalanuvchidan (mijozdan) bo'lsa, adminga bildirishnoma yetkazamiz
-    sender = message.from_user
     targets = get_all_target_admins()
     if sender.id not in targets:
         username_str = f"@{sender.username}" if sender.username else f"ID: {sender.id}"
@@ -678,11 +728,10 @@ async def on_direct_message(message: Message):
 
 async def main():
     me = await bot.get_me()
-    logger.info(f"Bot ishga tushdi: @{me.username} ({me.first_name}) | Ega: {ai_service.owner_name}")
+    logger.info(f"Bot ishga tushdi: @{me.username} ({me.first_name})")
     print(f"\n==========================================")
     print(f"🤖 Bot muvaffaqiyatli ishga tushdi: @{me.username}")
-    print(f"👑 Ega ismi: {ai_service.owner_name}")
-    print(f"⚡ Holat: {bot_data.get('owner_status', 'offline')}")
+    print(f"⚡ Ko'p foydalanuvchili shaxsiy ism va aqlli AI tizimi: FAOL")
     print(f"==========================================\n")
 
     await bot.delete_webhook(drop_pending_updates=True)

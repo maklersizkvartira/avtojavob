@@ -14,7 +14,7 @@ class AIService:
         api_key: str,
         model: str = "openai/gpt-oss-120b",
         base_url: str = None,
-        owner_name: str = "Zayniddin",
+        owner_name: str = "Akkaunt egasi",
         system_prompt: str = ""
     ):
         if base_url:
@@ -22,13 +22,13 @@ class AIService:
         else:
             self.client = AsyncOpenAI(api_key=api_key)
         self.model = model or "openai/gpt-oss-120b"
-        self.owner_name = owner_name or "Zayniddin"
+        self.owner_name = owner_name or "Akkaunt egasi"
         self.custom_prompt = system_prompt
         self.histories: Dict[str, List[dict]] = defaultdict(list)
         self.max_history = 10
 
     def set_owner_name(self, name: str):
-        """Ega ismini yangilash."""
+        """Global fallback ega ismini yangilash."""
         if name and name.strip():
             self.owner_name = name.strip()
 
@@ -46,32 +46,31 @@ class AIService:
             r'kim qildi',
             r'kim yozdi',
             r'kim ishlab chiq',
-            r'open\s*ai',
-            r'chat\s*gpt',
-            r'kimning odamisan',
-            r'sen kimsan',
-            r'kim bu'
+            r'kimning odamisan'
         ]
         for p in patterns:
             if re.search(p, t):
                 return True
         return False
 
-    def build_system_prompt(self) -> str:
-        """Ega ismiga moslangan qat'iy tizim ko'rsatmasi."""
-        name = self.owner_name or "Zayniddin"
+    def build_system_prompt(self, owner_name: str = None) -> str:
+        """Ega ismiga moslangan aqlli va tabiiy tizim ko'rsatmasi."""
+        name = owner_name or self.owner_name or "Akkaunt egasi"
+        custom_instructions = f"\nQo'shimcha biznes yo'riqnomasi:\n{self.custom_prompt}\n" if self.custom_prompt else ""
+
         return (
-            f"SIZNING IDENTIKLIGINGIZ (ENG MUHIM QAT'IY QOIDA):\n"
-            f"Sizni faqat va faqat {name} yaratgan! Siz {name}ning sodiq shaxsiy yordamchisisiz!\n"
-            f"Agar kimdir 'Seni kim yaratgan?', 'Egang kim?', 'Kimning botisan?' deb so'rasa, "
-            f"har doim: 'Meni {name} yaratgan, men {name}ning shaxsiy yordamchisiman!' deb javob bering.\n"
-            f"QAT'IYAN TAQIQLANADI: Hech qachon 'OpenAI', 'ChatGPT', 'til modeliman', 'sun'iy intellektman' deb aytmang! "
-            f"Siz faqat {name}ning shaxsiy yordamchisisiz.\n\n"
-            f"VAZIFANGIZ:\n"
-            f"1. {name} nomidan xushmuomala, muloyim va tabiiy o'zbek tilida gaplashing.\n"
-            f"2. Salomlashishsa, iliq alik oling. {name} hozir biroz bandligini, lekin xabarni darhol ularga yetkazganingizni bildiring.\n"
-            f"3. Mijozdan kerakli ma'lumotlarni qisqa so'rab oling va {name} tez orada o'zi bog'lanishini ayting.\n"
-            f"4. Javoblaringiz qisqa (1-3 ta gap) va lo'nda bo'lsin."
+            f"Siz — {name}ning aqlli, xushmuomala va tajribali shaxsiy yordamchisisiz!\n\n"
+            f"ASOSIY QOIDALAR VA VAZIFALARINGIZ:\n"
+            f"1. SAVOLLARGA TO'G'RI VA ANIQ JAVOB BERING: Foydalanuvchi yoki mijoz har qanday savol bersa "
+            f"(xizmatlar, ko'chmas mulk, ma'lumotlar, narxlar, maslahatlar yoki oddiy suhbat), "
+            f"siz sun'iy intellekt sifatida o'sha savolga to'liq, aqlli, mantiqan to'g'ri va yordam beruvchi javob qaytaring.\n"
+            f"2. QOLIPDAN MUTLAQO QOCHING: Hech qachon 'Falonchi hozir band, tez orada bog'lanadi' deb bir xil ma'nosiz gapni takrorlamang! "
+            f"Mijozning aniq savoliga darhol mazmunli va foydali javob bering.\n"
+            f"3. IDENTIKLIK: Agar 'Seni kim yaratgan?', 'Egang kim?', 'Kimning yordamchisisan?' deb so'rashsa: "
+            f"'Meni {name} yaratgan, men {name}ning shaxsiy yordamchisiman!' deb javob bering. "
+            f"Hech qachon 'OpenAI', 'ChatGPT' deb aytmang.\n"
+            f"4. MUOMALA: O'zbek tilida tabiiy, samimiy, ravon va xushmuomala gaplashing. Javoblaringiz tushunarli bo'lsin."
+            f"{custom_instructions}"
         )
 
     def _get_history(self, chat_key: str) -> List[dict]:
@@ -83,19 +82,20 @@ class AIService:
         if len(history) > self.max_history * 2:
             self.histories[chat_key] = history[-(self.max_history * 2):]
 
-    async def get_reply(self, chat_key: str, user_message: str, sender_name: str = "") -> str:
+    async def get_reply(self, chat_key: str, user_message: str, sender_name: str = "", owner_name: str = None) -> str:
         """
-        OpenAI/Groq orqali matnga aqlli javob oladi.
+        OpenAI/Groq orqali har bir akkaunt egasi nomidan to'g'ri va aqlli javob oladi.
         """
+        active_owner = owner_name or self.owner_name or "Akkaunt egasi"
         self._add_to_history(chat_key, "user", user_message)
 
-        # 1. Egang kim / Seni kim yaratgan savollari bo'lsa darhol 100% aniq javob berish
+        # 1. Egang kim / Seni kim yaratgan savollari bo'lsa darhol tegishli ega nomi bilan javob berish
         if self.is_creator_question(user_message):
-            reply = f"Meni {self.owner_name} yaratgan, men {self.owner_name}ning shaxsiy yordamchisiman!"
+            reply = f"Meni {active_owner} yaratgan, men {active_owner}ning shaxsiy yordamchisiman!"
             self._add_to_history(chat_key, "assistant", reply)
             return reply
 
-        system_instruction = self.build_system_prompt()
+        system_instruction = self.build_system_prompt(active_owner)
         messages = [{"role": "system", "content": system_instruction}]
         messages.extend(self._get_history(chat_key))
 
@@ -104,29 +104,27 @@ class AIService:
                 model=self.model,
                 messages=messages,
                 temperature=0.6,
-                frequency_penalty=0.4,
-                presence_penalty=0.4,
-                max_tokens=500,
+                frequency_penalty=0.3,
+                presence_penalty=0.3,
+                max_tokens=600,
             )
             reply = response.choices[0].message.content.strip()
 
-            # 2. Xavfsizlik filtri: Agar javobda tasodifan OpenAI yoki ChatGPT chiqsa, tozalaymiz
+            # 2. Xavfsizlik filtri: Agar javobda OpenAI yoki ChatGPT chiqsa, tozalaymiz
             if "openai" in reply.lower() or "chatgpt" in reply.lower():
-                reply = f"Meni {self.owner_name} yaratgan, men {self.owner_name}ning shaxsiy yordamchisiman!"
+                reply = f"Meni {active_owner} yaratgan, men {active_owner}ning shaxsiy yordamchisiman!"
 
             self._add_to_history(chat_key, "assistant", reply)
             return reply
 
         except openai.RateLimitError as e:
             logger.error(f"OpenAI RateLimit xatosi: {e}")
-            return f"Assalomu alaykum! Xabaringiz {self.owner_name}ga yetkazildi, tez orada o'zlari javob yozadilar."
+            return f"Assalomu alaykum! Xabaringiz {active_owner}ga yetkazildi, tez orada javob beramiz."
 
         except openai.AuthenticationError as e:
             logger.error(f"API kaliti xato: {e}")
-            return f"Assalomu alaykum! Xabaringiz {self.owner_name}ga qabul qilindi, tez orada bog'lanamiz."
+            return f"Assalomu alaykum! Xabaringiz {active_owner}ga qabul qilindi, tez orada bog'lanamiz."
 
         except Exception as e:
             logger.error(f"AI javob olishda xatolik: {e}")
-            return f"Assalomu alaykum! Xabaringiz {self.owner_name}ga yetkazildi, tez orada javob qaytaramiz."
-
-
+            return f"Assalomu alaykum! Xabaringiz {active_owner}ga yetkazildi, tez orada javob qaytaramiz."
