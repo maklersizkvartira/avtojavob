@@ -775,59 +775,66 @@ async def process_reminder_text_common(message: Message, text: str, state: FSMCo
 
 @dp.callback_query(F.data.startswith("qtime_"))
 async def cb_quick_time_reminder(call: CallbackQuery):
-    time_key = call.data.replace("qtime_", "")
-    user_id = call.from_user.id
-    task_name = bot_data.get("temp_tasks", {}).get(str(call.message.chat.id), "Muhim vazifa")
+    await call.answer("Qabul qilindi!")
+    try:
+        time_key = call.data.replace("qtime_", "")
+        chat_id = call.message.chat.id
+        task_name = bot_data.get("temp_tasks", {}).get(str(chat_id), "Muhim vazifa")
 
-    now = get_now()
-    if time_key == "1":
-        target_dt = now + timedelta(minutes=1)
-    elif time_key == "3":
-        target_dt = now + timedelta(minutes=3)
-    elif time_key == "5":
-        target_dt = now + timedelta(minutes=5)
-    elif time_key == "15":
-        target_dt = now + timedelta(minutes=15)
-    elif time_key == "30":
-        target_dt = now + timedelta(minutes=30)
-    elif time_key == "60":
-        target_dt = now + timedelta(minutes=60)
-    elif time_key == "180":
-        target_dt = now + timedelta(minutes=180)
-    elif time_key == "tom9":
-        tomorrow = now + timedelta(days=1)
-        target_dt = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
-    else:
-        target_dt = now + timedelta(minutes=1)
+        now = get_now()
+        if time_key == "1":
+            target_dt = now + timedelta(minutes=1)
+        elif time_key == "3":
+            target_dt = now + timedelta(minutes=3)
+        elif time_key == "5":
+            target_dt = now + timedelta(minutes=5)
+        elif time_key == "15":
+            target_dt = now + timedelta(minutes=15)
+        elif time_key == "30":
+            target_dt = now + timedelta(minutes=30)
+        elif time_key == "60":
+            target_dt = now + timedelta(minutes=60)
+        elif time_key == "180":
+            target_dt = now + timedelta(minutes=180)
+        elif time_key == "tom9":
+            tomorrow = now + timedelta(days=1)
+            target_dt = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+        else:
+            target_dt = now + timedelta(minutes=1)
 
+        iso_time = target_dt.isoformat()
+        rem = reminder_manager.add_reminder(
+            task=task_name,
+            rem_datetime_iso=iso_time,
+            source="manual",
+            target_chat_id=chat_id
+        )
 
-    iso_time = target_dt.isoformat()
-    rem = reminder_manager.add_reminder(
-        task=task_name,
-        rem_datetime_iso=iso_time,
-        source="manual",
-        target_chat_id=call.message.chat.id
-    )
+        display_time = target_dt.strftime("%H:%M (%d-%m-%Y)")
+        userbot_ready = await call_service.is_authorized()
+        userbot_status = "🟢 Ulangan (Telegramdan qo'ng'iroq qilinadi)" if userbot_ready else "⚠️ Ulanmagan (/userbot orqali ulang)"
 
-    display_time = target_dt.strftime("%H:%M (%d-%m-%Y)")
-    userbot_ready = await call_service.is_authorized()
-    userbot_status = "🟢 Ulangan (Telegramdan qo'ng'iroq qilinadi)" if userbot_ready else "⚠️ Ulanmagan (/userbot orqali ulang)"
+        confirm_text = (
+            "✅ <b>ESLATMA VA QO'NG'IROQ SAQLANDI!</b>\n\n"
+            f"📝 <b>Vazifa:</b> <blockquote>{html.escape(task_name)}</blockquote>\n"
+            f"⏰ <b>Vaqti:</b> <b>{display_time} (Toshkent vaqti)</b>\n"
+            f"📞 <b>Qo'ng'iroq tizimi:</b> {userbot_status}\n\n"
+            "<i>Belgilangan daqiqada bot sizga avtomatik qo'ng'iroq qiladi va eslatadi!</i>"
+        )
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="❌ O'chirish", callback_data=f"rem_cancel_{rem['id']}")],
+                [InlineKeyboardButton(text="📋 Barcha eslatmalarim", callback_data="show_reminders")]
+            ]
+        )
+        try:
+            await call.message.edit_text(confirm_text, parse_mode="HTML", reply_markup=markup)
+        except Exception:
+            await call.message.reply(confirm_text, parse_mode="HTML", reply_markup=markup)
+    except Exception as e:
+        logger.error(f"qtime xatoligi: {e}")
+        await call.message.reply(f"❌ Xatolik yuz berdi: {e}")
 
-    confirm_text = (
-        "✅ <b>ESLATMA VA QO'NG'IROQ SAQLANDI!</b>\n\n"
-        f"📝 <b>Vazifa:</b> <blockquote>{html.escape(task_name)}</blockquote>\n"
-        f"⏰ <b>Vaqti:</b> <b>{display_time} (Toshkent vaqti)</b>\n"
-        f"📞 <b>Qo'ng'iroq tizimi:</b> {userbot_status}\n\n"
-        "<i>Belgilangan daqiqada bot sizga avtomatik qo'ng'iroq qiladi va eslatadi!</i>"
-    )
-    markup = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="❌ O'chirish", callback_data=f"rem_cancel_{rem['id']}")],
-            [InlineKeyboardButton(text="📋 Barcha eslatmalarim", callback_data="show_reminders")]
-        ]
-    )
-    await call.message.edit_text(confirm_text, parse_mode="HTML", reply_markup=markup)
-    await call.answer("Eslatma saqlandi!")
 
 
 
