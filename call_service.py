@@ -12,16 +12,20 @@ logger = logging.getLogger("call_service")
 
 SESSION_FILE = "userbot_session"
 
+DEFAULT_API_ID = 2040
+DEFAULT_API_HASH = "b18441a1ff607e10a989891a5462e627"
+
 
 class CallService:
     def __init__(self, api_id: Optional[int] = None, api_hash: Optional[str] = None):
-        self.api_id = api_id or os.getenv("USERBOT_API_ID")
-        self.api_hash = api_hash or os.getenv("USERBOT_API_HASH")
-        if self.api_id:
-            try:
-                self.api_id = int(self.api_id)
-            except ValueError:
-                self.api_id = None
+        raw_id = api_id or os.getenv("USERBOT_API_ID") or DEFAULT_API_ID
+        raw_hash = api_hash or os.getenv("USERBOT_API_HASH") or DEFAULT_API_HASH
+        try:
+            self.api_id = int(raw_id)
+        except ValueError:
+            self.api_id = DEFAULT_API_ID
+        self.api_hash = str(raw_hash)
+
 
         self.client: Optional[TelegramClient] = None
         self._phone_code_hash: Optional[str] = None
