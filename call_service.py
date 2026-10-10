@@ -76,33 +76,41 @@ class CallService:
             logger.error(f"Kod so'rashda xatolik: {e}")
             return False, f"Xatolik: {str(e)}"
 
-    async def sign_in_with_code(self, code: str, password: Optional[str] = None) -> Tuple[bool, str]:
-        """Kodni tekshirib tizimga kirish (kerak bo'lsa 2FA parol bilan)."""
+    async def sign_in_with_code(self, code: str) -> Tuple[bool, str]:
+        """Kodni tekshirib tizimga kirish (agar 2FA bo'lsa 2FA_PASSWORD_REQUIRED qaytaradi)."""
         try:
             client = await self.get_client()
             if not client or not self._temp_phone or not self._phone_code_hash:
                 return False, "Avval telefon raqamni kiritishingiz kerak."
 
             try:
-                await client.sign_in(
+                me = await client.sign_in(
                     phone=self._temp_phone,
                     code=code,
                     phone_code_hash=self._phone_code_hash
                 )
-                me = await client.get_me()
                 return True, f"Muvaffaqiyatli ulandi! Profil: {me.first_name}"
             except Exception as e:
                 err_str = str(e).lower()
-                if "password" in err_str or "2fa" in err_str or "two-step" in err_str:
-                    if password:
-                        await client.sign_in(password=password)
-                        me = await client.get_me()
-                        return True, f"Muvaffaqiyatli ulandi! Profil: {me.first_name}"
+                if "password" in err_str or "2fa" in err_str or "two-step" in err_str or "sessionpasswordneeded" in err_str:
                     return False, "2FA_PASSWORD_REQUIRED"
                 return False, f"Xatolik: {str(e)}"
         except Exception as e:
             logger.error(f"Tizimga kirishda xatolik: {e}")
             return False, f"Xatolik: {str(e)}"
+
+    async def sign_in_with_password(self, password: str) -> Tuple[bool, str]:
+        """2FA Cloud Password (ikki bosqichli parol) bilan tizimga kirish."""
+        try:
+            client = await self.get_client()
+            if not client:
+                return False, "Telegram client ulanmagan."
+            me = await client.sign_in(password=password)
+            return True, f"Muvaffaqiyatli ulandi! Profil: {me.first_name}"
+        except Exception as e:
+            logger.error(f"2FA paroli tekshirishda xatolik: {e}")
+            return False, f"Xatolik: {str(e)}"
+
 
     async def make_call(self, target_user_id: int, duration_seconds: int = 25) -> Tuple[bool, str]:
         """

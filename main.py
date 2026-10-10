@@ -3,6 +3,7 @@ import html
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime
 from dotenv import load_dotenv
@@ -938,7 +939,7 @@ async def process_userbot_password_step(message: Message, state: FSMContext):
     pwd = message.text.strip()
     await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
 
-    success, msg = await call_service.sign_in_with_code(code="", password=pwd)
+    success, msg = await call_service.sign_in_with_password(password=pwd)
     await state.clear()
     if success:
         await message.reply(
@@ -948,7 +949,11 @@ async def process_userbot_password_step(message: Message, state: FSMContext):
             reply_markup=get_settings_keyboard()
         )
     else:
-        await message.reply(f"❌ Parol noto'g'ri: {html.escape(msg)}\nQayta urinish: /userbot", parse_mode="HTML")
+        await message.reply(
+            f"❌ <b>2FA Parol noto'g'ri:</b>\n{html.escape(msg)}\n\nQaytadan urinish uchun: /userbot",
+            parse_mode="HTML"
+        )
+
 
 
 @dp.callback_query(F.data == "settings_back")
@@ -1092,9 +1097,22 @@ async def cmd_status(message: Message):
 async def on_direct_message(message: Message, state: FSMContext):
     """
     Foydalanuvchi botga xabar yozganda:
-    AI uni avtomatik eslatma va qo'ng'iroq buyurtmasi deb qabul qiladi.
+    1. Agar telefon raqam bo'lsa -> Userbot ulanishini boshlaydi.
+    2. Aks holda -> AI uni eslatma deb qabul qiladi.
     """
-    await process_reminder_text_common(message, message.text.strip(), state)
+    text = message.text.strip()
+    cleaned_phone = text.replace(" ", "").replace("-", "")
+
+    # Telefon raqam ekanligini tekshirish (masalan: +998901234567 yoki 998901234567)
+    if (cleaned_phone.startswith("+") or cleaned_phone.isdigit()) and 9 <= len(cleaned_phone.replace("+", "")) <= 15:
+        if not any(w in text.lower() for w in ["soat", "da", "uchrashuv", "eslat", "bugun", "ertaga"]):
+            logger.info(f"Foydalanuvchi telefon raqam kiritdi: {cleaned_phone}")
+            await state.set_state(FormStates.waiting_for_userbot_phone)
+            await process_userbot_phone_step(message, state)
+            return
+
+    await process_reminder_text_common(message, text, state)
+
 
 
 
