@@ -182,3 +182,54 @@ class AIService:
                 continue
 
         return f"Assalomu alaykum! Xabaringiz {active_owner}ga yetkazildi, tez orada javob qaytaramiz."
+
+    def is_reminder_phrase(self, text: str) -> bool:
+        """Matnda eslatma so'zi yoki unga o'xshash talab borligini tekshirish."""
+        t = text.lower()
+        keywords = [
+            'eslat', 'eslatib', 'eslatma', 'eslatvor', 'esingdan', 'yodimga sol',
+            'esga sol', 'remind', 'rejalashtir', 'unutmang', 'unutma', 'eslatvoring'
+        ]
+        return any(k in t for k in keywords)
+
+    async def extract_reminder(self, text: str, now_dt_str: str) -> Optional[dict]:
+        """
+        Foydalanuvchi xabaridan eslatma vaqtini va vazifasini avtomatik ajratib olish.
+        """
+        if not self.is_reminder_phrase(text):
+            return None
+
+        prompt = (
+            f"Bugungi aniq sana va vaqt (Toshkent vaqti, UTC+5): {now_dt_str}.\n"
+            f"Foydalanuvchi xabari: \"{text}\".\n\n"
+            "VAZIFA: Ushbu xabarda muayyan vaqtda biror narsani eslatish (eslatma) so'ralganmi?\n"
+            "Agar ha bo'lsa, eslatma vazifasini va aniq nishon vaqtini (target_iso) hisoblab chiqaring.\n"
+            "Misollar:\n"
+            "- '10 daqiqadan keyin telefon qilishimni eslat' -> target_iso hozirgi vaqtdan 10 daqiqa keyin\n"
+            "- 'bugun 20:00 da dori ichishimni eslat' -> bugungi sana, soat 20:00:00\n"
+            "- 'ertaga soat 14:00 da boraman eslatib qoying' -> ertangi sana, soat 14:00:00\n\n"
+            "Format faqat JSON bo'lishi shart:\n"
+            "{\n"
+            "  \"has_reminder\": true,\n"
+            "  \"task\": \"eslatilishi kerak bo'lgan vazifa (qisqa va lo'nda)\",\n"
+            "  \"target_iso\": \"YYYY-MM-DDTHH:MM:SS\",\n"
+            "  \"display_time\": \"soat 18:00 da (o'zbekcha chiroyli ifodasi)\"\n"
+            "}\n"
+            "Agar eslatma vaqti noaniq bo'lsa yoki eslatma so'ralmagan bo'lsa: {\"has_reminder\": false}"
+        )
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                response_format={"type": "json_object"}
+            )
+            raw = response.choices[0].message.content.strip()
+            data = json.loads(raw)
+            if data.get("has_reminder") and data.get("target_iso"):
+                return data
+            return None
+        except Exception as e:
+            logger.error(f"Eslatma aniqlashda xatolik: {e}")
+            return None
