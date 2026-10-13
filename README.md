@@ -1,67 +1,71 @@
-# 🤖 Telegram Business AI Avtojavob Boti
+# ⚡ HANDS OF GLORY — 3D Cyber Arena
 
-Ushbu bot Telegram'ning yangi **Telegram Business Chatbots** imkoniyatidan foydalanib, shaxsiy yoki biznes profilingizga boshqalar xabar yozganda ularga **OpenAI (ChatGPT)** orqali avtomatik va aqlli tarzda javob qaytarish uchun mo'ljallangan.
+An elite, mobile-first 3D Rock Paper Scissors arena game featuring articulated anatomical 3D hands, synchronized countdown animations, Web Audio synthesizer effects, a best-of-three decisive round match system, and a live real-time backend ready for Railway deployment.
 
----
-
-## 🚀 Qanday qilib sozlash va ishlatish kerak?
-
-### 1-qadam: @BotFather da Business rejimini yoqish (MUHIM!)
-Bot Telegram Business hisobiga ulanishi uchun, avval BotFather'da ruxsat berilishi shart:
-1. Telegramda [@BotFather](https://t.me/BotFather) botiga kiring.
-2. `/mybots` buyrug'ini yuboring va botingizni (`@avtojavobai_bot`) tanlang.
-3. **Bot Settings** tugmasini bosing.
-4. **Telegram Business** (yoki **Business Mode**) bandini tanlang.
-5. **Turn On** (Yoqish) tugmasini bosing.
+![Hands of Glory](https://img.shields.io/badge/Status-Live%20Arena-00e5ff?style=for-the-badge)
+![Platform](https://img.shields.io/badge/Deploy-Railway-6851ff?style=for-the-badge)
+![Tech](https://img.shields.io/badge/Three.js-WebGL-f59e0b?style=for-the-badge)
 
 ---
 
-### 2-qadam: Telegram profilingizga botni ulash
-1. Telegram ilovasida **Sozlamalar (Настройки / Settings)** bo'limiga kiring.
-2. **Telegram Business** bo'limini oching.
-3. **Chatbotlar (Чат-боты / Chatbots)** bandiga kiring.
-4. Bot qidiruv maydoniga `@avtojavobai_bot` deb yozing va tanlang.
-5. Qaysi chatlarda javob berishini belgilang (Barchaga, yoki faqat kontaktda yo'qlarga va h.k.) va **Saqlash (Save)** tugmasini bosing.
+## 🎮 Core Game Features
 
-Endi kimdir sizga shaxsiy xabar yozsa, bot sizning nomingizdan AI orqali avtomatik javob bera boshlaydi!
+### 1. Realistic Articulated 3D Hands (Three.js)
+- **Procedural Anatomical Modeling**: Full hand skeleton with wrist cuff, palm core, and 5 fully articulated fingers (Thumb, Index, Middle, Ring, Pinky).
+- **Recognizable Gestures**:
+  - ✊ **ROCK**: Solid clenched fist with thumb locked over knuckles.
+  - ✋ **PAPER**: Wide fanned-out open hand with extended fingers.
+  - ✌️ **SCISSORS**: Sharp V-shape extended index & middle fingers, tightly curled ring and pinky.
+- **Dynamic Physics & Lighting**: PBR metallic-cyber materials, dual rim lights (Electric Cyan for Player, Amber Flame for Opponent), holographic arena rings, and impact sparks on clash.
+
+### 2. Best of Three Match Rules
+- Match consists of up to **3 decisive rounds**.
+- **First to win 2 rounds wins the match immediately** (can end 2-0 or 2-1).
+- **Draws do not award points**: Both players replay the round slot without wasting a decisive match point.
+
+### 3. Tactile Sound Engine (Web Audio API)
+- Pure synthesized Web Audio (zero audio asset latency and no 404s).
+- Crisp button taps, 3-2-1 countdown ticks, heavy sub-bass clash impacts, victory fanfares, and defeat tones.
+- Mute/Unmute state persisted in `localStorage`.
+
+### 4. Real-time Backend & Online 1v1 Multiplayer
+- Built with **Node.js, Express, and Socket.IO**.
+- **Solo vs AI**: Choose between *Novice* (pure random), *Tactical* (counter-play psychology), and *Grandmaster* (frequency matrix analysis).
+- **Online 1v1 Room**: Create a private 4-letter room code (e.g., `GLOR`), invite a friend, and play live in real-time.
+- **Live Leaderboard & Statistics**: Persistent stats tracking total matches, weapon pick frequency, and win streak records.
 
 ---
 
-### 3-qadam: Botni kompyuterda ishga tushirish
-
-Terminalda loyiha papkasida ushbu buyruqni bering:
+## 🚀 Running Locally
 
 ```bash
-cd /Users/macbookair/Desktop/Ai
-.venv/bin/python main.py
+# Install dependencies
+npm install
+
+# Run unit test suite (validates all RPS matchups and Best-of-3 rules)
+npx tsx tests/gameLogic.test.js
+
+# Build production bundle
+npm run build
+
+# Start fullstack server (Express + Socket.IO on port 3001)
+npm start
 ```
 
----
-
-## ⚠️ OpenAI Balansi (Hisob) haqida Muhim Eslatma:
-Siz taqdim etgan OpenAI API kaliti tekshirilganda, unda **kredit/balans tugaganligi (RateLimit / credit_balance_exhausted)** aniqlandi:
-- Yangi balans to'ldirish yoki yangi API kalit olish uchun: [platform.openai.com](https://platform.openai.com) saytiga kiring.
-- Yangi kalitni `.env` faylidagi `OPENAI_API_KEY` parametriga joylang.
+Open [http://localhost:3001](http://localhost:3001) in your browser.
 
 ---
 
----
+## 🚂 Railway Deployment
 
----
+This project is fully pre-configured for **Railway** deployment:
 
-## 🤖 AI Avtojavob va Aqlli Shaxsiy Yordamchi
-
-1. **Telegram Business orqali mijozlarga avtojavob:**
-   - Kimdir sizning Telegram profilingizga yozsa, AI sizning nomingizdan muloyim va aniq javob beradi.
-   - Bot yozgan javoblar haqida hisob egasiga darhol bildirishnoma yetkaziladi.
-   - Chatga o'zingiz kirib yozsangiz, bot avvalgi avtojavoblarni avtomatik tozalaydi!
-
-2. **Botga to'g'ridan-to'g'ri yozilganda:**
-   - Odamlar botning o'ziga yozsa, bot AI orqali savollarga mustaqil va to'liq avtomatik javob beradi.
-
-## 📁 Loyiha Tuzilishi:
-- `main.py` - Telegram Bot va Telegram Business boshqaruvi.
-- `ai_service.py` - OpenAI/Groq AI integratsiyasi, shaxsiy identiklik himoyasi va suhbat xotirasi.
-- `.env` - Bot tokeni va AI API kaliti.
-- `requirements.txt` - Kerakli kutubxonalar ro'yxati.
-
+1. **`railway.json`**:
+   Configured with Nixpacks to automatically execute `npm install && npm run build` and start via `node server.js`.
+2. **`Procfile`**:
+   Contains `web: node server.js`.
+3. **`Dockerfile`**:
+   Provided as an alternate containerized build option.
+4. **Environment Variables**:
+   - `PORT`: Automatically assigned by Railway.
+   - `NODE_ENV`: `production`.

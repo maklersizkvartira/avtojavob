@@ -1,0 +1,20 @@
+{
+  "totalMatches": 43,
+  "playerWins": 25,
+  "botWins": 18,
+  "draws": 7,
+  "choices": {
+    "rock": 69,
+    "paper": 56,
+    "scissors": 62
+  },
+  "winStreakRecord": 5,
+  "recentMatches": [
+    {
+      "id": 1791879993010,
+      "winner": "player",
+      "roundsPlayed": 4,
+      "timestamp": "2026-10-13T08:26:33.010Z"
+    }
+  ]
+}
