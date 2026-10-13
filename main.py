@@ -49,10 +49,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("telegram_business_bot")
 
-# Ma'lumotlarni saqlash fayli
 DATA_FILE = "bot_data.json"
-
 START_TIME = time.time()
+
+# Loop va takrorlanishdan himoya qilish uchun oxirgi xabarlar keshi
+PROCESSED_MESSAGES = set()
+LAST_REPLY_TIME = {}  # {chat_key: timestamp}
 
 
 def load_data() -> dict:
@@ -63,6 +65,7 @@ def load_data() -> dict:
         except Exception as e:
             logger.warning(f"Ma'lumotlar faylini o'qishda xatolik: {e}")
     return {
+        "auto_reply_enabled": True,  # Asosiy kalit: avtojavob yoqilgan/o'chirilgan
         "connections": {},
         "admins": [],
         "user_names": {},
@@ -87,6 +90,8 @@ def save_data(data: dict):
 
 
 bot_data = load_data()
+if "auto_reply_enabled" not in bot_data:
+    bot_data["auto_reply_enabled"] = True
 if "stats" not in bot_data:
     bot_data["stats"] = {
         "total_messages": 0,
@@ -106,11 +111,9 @@ ai_service = AIService(
     system_prompt=SYSTEM_PROMPT
 )
 
-# Inline xabarlarni bog'lash kesh
 notification_map = {}
 
 
-# FSM holatlari
 class FormStates(StatesGroup):
     waiting_for_reply = State()
     waiting_for_name = State()
@@ -118,6 +121,15 @@ class FormStates(StatesGroup):
 
 
 # Yordamchi funksiyalar
+def is_auto_reply_on() -> bool:
+    return bool(bot_data.get("auto_reply_enabled", True))
+
+
+def set_auto_reply(status: bool):
+    bot_data["auto_reply_enabled"] = status
+    save_data(bot_data)
+
+
 def get_user_name(user_id: int, fallback: str = "Zayniddin") -> str:
     names = bot_data.setdefault("user_names", {})
     return names.get(str(user_id), fallback or OWNER_NAME_DEFAULT)
@@ -126,17 +138,6 @@ def get_user_name(user_id: int, fallback: str = "Zayniddin") -> str:
 def set_user_name(user_id: int, name: str):
     names = bot_data.setdefault("user_names", {})
     names[str(user_id)] = name.strip()
-    save_data(bot_data)
-
-
-def get_user_status(user_id: int) -> str:
-    statuses = bot_data.setdefault("owner_statuses", {})
-    return statuses.get(str(user_id), "offline")
-
-
-def set_user_status(user_id: int, status: str):
-    statuses = bot_data.setdefault("owner_statuses", {})
-    statuses[str(user_id)] = status
     save_data(bot_data)
 
 
@@ -153,7 +154,6 @@ def get_all_target_admins() -> list:
 
 
 def is_lead_intent(text: str) -> bool:
-    """Telefon raqami yoki uchrashuv/aloqa talabini aniqlash."""
     patterns = [
         r'\+?998\s?\d{2}\s?\d{3}\s?\d{2}\s?\d{2}',
         r'\b\d{9}\b',
@@ -173,28 +173,26 @@ def is_lead_intent(text: str) -> bool:
     return False
 
 
-# Klaviaturalar
 def get_settings_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    status = get_user_status(user_id)
-    status_btn_text = "🟢 Onlayn (Avtojavob to'xtatilgan)" if status == "online" else "🔴 Oflayn (Avtojavob faol)"
-    toggle_val = "set_offline" if status == "online" else "set_online"
+    active = is_auto_reply_on()
+    if active:
+        power_btn = InlineKeyboardButton(text="🛑 Avtojavobni O'CHIRISH (To'xtatish)", callback_data="toggle_power_off")
+    else:
+        power_btn = InlineKeyboardButton(text="▶️ Avtojavobni YOQISH (Faollashtirish)", callback_data="toggle_power_on")
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text=f"🔄 Holat: {status_btn_text}", callback_data=toggle_val)
-            ],
+            [power_btn],
             [
                 InlineKeyboardButton(text="✏️ Ismni o'zgartirish", callback_data="btn_change_name"),
                 InlineKeyboardButton(text="🎭 AI Uslubi", callback_data="btn_select_mode")
             ],
             [
-                InlineKeyboardButton(text="📝 Shaxsiy Prompt", callback_data="btn_change_prompt"),
-                InlineKeyboardButton(text="🧹 Xotirani tozalash", callback_data="btn_clear_history")
+                InlineKeyboardButton(text="🧹 Xotirani tozalash", callback_data="btn_clear_history"),
+                InlineKeyboardButton(text="📊 Statistika", callback_data="btn_show_stats")
             ],
             [
-                InlineKeyboardButton(text="📊 Statistika", callback_data="btn_show_stats"),
-                InlineKeyboardButton(text="⚡ Bot Holati", callback_data="btn_check_status")
+                InlineKeyboardButton(text="⚡ Server Holati", callback_data="btn_check_status")
             ]
         ]
     )
@@ -204,11 +202,11 @@ def get_mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="🎯 Standart (Do'stona)", callback_data="mode_standard"),
+                InlineKeyboardButton(text="🎯 Standart", callback_data="mode_standard"),
                 InlineKeyboardButton(text="💼 Biznes & Savdo", callback_data="mode_business")
             ],
             [
-                InlineKeyboardButton(text="⚡ Qisqa va lo'nda", callback_data="mode_concise"),
+                InlineKeyboardButton(text="⚡ Qisqa & Lo'nda", callback_data="mode_concise"),
                 InlineKeyboardButton(text="📚 Chuqur tahliliy", callback_data="mode_detailed")
             ],
             [
@@ -219,14 +217,13 @@ def get_mode_keyboard() -> InlineKeyboardMarkup:
 
 
 # ==========================================
-# 1. TELEGRAM BUSINESS VOQEALARI
+# 1. TELEGRAM BUSINESS VOQEALARI (MUTLAQO XAVFSIZ)
 # ==========================================
 
 @dp.business_connection()
 async def on_business_connection(conn: BusinessConnection):
     conn_id = conn.id
     user_id = conn.user.id
-
     connections = bot_data.setdefault("connections", {})
 
     if conn.is_enabled:
@@ -239,26 +236,26 @@ async def on_business_connection(conn: BusinessConnection):
             admins.append(user_id)
             save_data(bot_data)
 
-        # Agar ism belgilanmagan bo'lsa
         if str(user_id) not in bot_data.get("user_names", {}):
             set_user_name(user_id, conn.user.first_name)
 
         owner_name = get_user_name(user_id, conn.user.first_name)
         try:
+            cur_status = "YOQILGAN 🟢" if is_auto_reply_on() else "O'CHIRILGAN 🔴"
+            welcome_txt = (
+                f"🎉 <b>Assalomu alaykum, {html.escape(owner_name)}!</b>\n\n"
+                "Telegram Business profilingiz botga muvaffaqiyatli ulandi!\n"
+                f"• Avtojavob holati: <b>{cur_status}</b>\n"
+                "• Istalgan vaqtda avtojavobni o'chirish uchun <code>/off</code> yoki quyidagi tugmani bosing."
+            )
             await bot.send_message(
                 chat_id=user_id,
-                text=(
-                    f"🎉 <b>Tabriklaymiz, {html.escape(owner_name)}!</b>\n\n"
-                    "Telegram Business profilingiz botga muvaffaqiyatli ulandi!\n"
-                    "Endi sizga mijozlar shaxsiy xabar yoki ovozli xabar yuborsa, bot sizning nomingizdan "
-                    "aqlli AI orqali avtomatik javob bera oladi.\n\n"
-                    "⚙️ <i>Boshqarish uchun /start buyrug'idan foydalaning.</i>"
-                ),
+                text=welcome_txt,
                 parse_mode="HTML",
                 reply_markup=get_settings_keyboard(user_id)
             )
         except Exception as e:
-            logger.warning(f"Foydalanuvchiga xabar yuborib bo'lmadi: {e}")
+            logger.warning(f"Xabar yuborishda xatolik: {e}")
     else:
         if conn_id in connections:
             del connections[conn_id]
@@ -268,22 +265,56 @@ async def on_business_connection(conn: BusinessConnection):
 
 @dp.business_message()
 async def on_business_message(message: Message):
+    # 1. ASOSIY TO'XTATISH SHARTI: Agar avtojavob o'chirilgan bo'lsa, BIROR QADAM HAM QILINMAYDI
+    if not is_auto_reply_on():
+        logger.info("Avtojavob o'chirilgan (auto_reply_enabled=False). Xabar o'tkazib yuborildi.")
+        return
+
     conn_id = message.business_connection_id
     if not conn_id:
         return
 
-    bot_data["stats"]["total_messages"] += 1
+    sender = message.from_user
+    if not sender:
+        return
 
-    connections = bot_data.get("connections", {})
+    # 2. CHEKSIZ LOOP OLDINI OLISH: Bot hech qachon o'zining yoki boshqa botlarning xabarlariga javob bermaydi!
+    if sender.is_bot:
+        return
+
+    me = await bot.get_me()
+    if sender.id == me.id:
+        return
+
+    # 3. TAKRORLANISH VA FLOOD HIMOYA
+    msg_unique_key = f"{conn_id}_{message.chat.id}_{message.message_id}"
+    if msg_unique_key in PROCESSED_MESSAGES:
+        return
+    PROCESSED_MESSAGES.add(msg_unique_key)
+    if len(PROCESSED_MESSAGES) > 500:
+        PROCESSED_MESSAGES.clear()
+
+    # 4. EGANI ANIQLASH (Keshdan yoki bevosita Telegram API'dan)
+    connections = bot_data.setdefault("connections", {})
     owner_user_id = connections.get(conn_id)
 
-    sender = message.from_user
+    if not owner_user_id:
+        try:
+            bc = await bot.get_business_connection(conn_id)
+            if bc and bc.user:
+                owner_user_id = bc.user.id
+                connections[conn_id] = owner_user_id
+                save_data(bot_data)
+        except Exception as e:
+            logger.warning(f"Business connection ma'lumotlarini olishda xatolik: {e}")
+
     client_chat_id = message.chat.id
     stored_key = f"{conn_id}_{client_chat_id}"
 
-    # 1. AKKAUNT EGASI CHATGA YOZSA -> AVTO-TOZALASH
+    # 5. AGAR AKKAUNT EGASI CHATGA O'ZI YOZAYOTGAN BO'LSA:
+    # Mutlaqo javob berilmaydi! Avvalgi bot javoblari mijoz chatidan tozalab tashlanadi.
     if owner_user_id and sender.id == owner_user_id:
-        logger.info(f"Akkaunt egasi ({sender.id}) chatga kirdi. Avtojavoblar tozalanadi.")
+        logger.info(f"Akkaunt egasi ({sender.id}) chatga o'zi yozdi. Bot aralashmaydi va tozalaydi.")
         bot_msgs = bot_data.setdefault("chat_bot_messages", {}).get(stored_key, [])
         if bot_msgs:
             for mid in bot_msgs:
@@ -299,15 +330,17 @@ async def on_business_message(message: Message):
             save_data(bot_data)
         return
 
-    # 2. AGAR EGASI ONLAYN BO'LSA VA AVTOJAVOB O'CHIRILGAN BO'LSA
-    if owner_user_id:
-        status = get_user_status(owner_user_id)
-        if status == "online":
-            return
+    # 6. INTERVAL TEKSHIRUVI: Bir xil chatga juda tez-tez javob qaytarmaslik (kamida 3 soniya)
+    now = time.time()
+    last_time = LAST_REPLY_TIME.get(stored_key, 0)
+    if now - last_time < 3:
+        return
+    LAST_REPLY_TIME[stored_key] = now
 
-    owner_name = get_user_name(owner_user_id, "Zayniddin") if owner_user_id else OWNER_NAME_DEFAULT
+    bot_data["stats"]["total_messages"] += 1
+    owner_name = get_user_name(owner_user_id, OWNER_NAME_DEFAULT) if owner_user_id else OWNER_NAME_DEFAULT
 
-    # Matn yoki Ovozli xabarni aniqlash
+    # Matn yoki Ovozli xabarni olish
     user_text = ""
     is_voice = False
 
@@ -328,9 +361,10 @@ async def on_business_message(message: Message):
         except Exception as e:
             logger.error(f"Ovozni yuklab olishda xatolik: {e}")
 
-    if not user_text:
+    if not user_text or not user_text.strip():
         return
 
+    # AI javob olish
     chat_key = f"biz_{conn_id}_{client_chat_id}"
     await bot.send_chat_action(
         chat_id=client_chat_id,
@@ -361,7 +395,7 @@ async def on_business_message(message: Message):
         logger.error(f"Business xabar yuborishda xatolik: {e}")
         return
 
-    # Akkaunt egasiga xabardor qilish
+    # Akkaunt egasiga bildirishnoma
     if owner_user_id:
         username_str = f"@{sender.username}" if sender.username else f"ID: {sender.id}"
         voice_badge = " <i>(🎤 Ovozli xabar transkripsiyasi)</i>" if is_voice else ""
@@ -405,7 +439,9 @@ async def on_business_message(message: Message):
 
 @dp.message(F.voice | F.audio)
 async def on_direct_voice(message: Message):
-    """Foydalanuvchi botga ovozli xabar yuborganda."""
+    if message.from_user and message.from_user.is_bot:
+        return
+
     bot_data["stats"]["total_messages"] += 1
     bot_data["stats"]["voice_transcriptions"] += 1
 
@@ -413,7 +449,6 @@ async def on_direct_voice(message: Message):
     user_name = get_user_name(sender.id, sender.first_name)
 
     await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.RECORD_VOICE)
-
     status_msg = await message.reply("🎧 <i>Ovozingiz eshitilmoqda va matnga aylantirilmoqda...</i>", parse_mode="HTML")
 
     try:
@@ -425,7 +460,7 @@ async def on_direct_voice(message: Message):
 
         transcribed = await ai_service.transcribe_audio(audio_bytes, filename="voice.ogg")
         if not transcribed:
-            await status_msg.edit_text("❌ Ovozni aniqlab bo'lmadi. Iltimos, qaytadan yozib ko'ring yoki matn ko'rinishida yuboring.")
+            await status_msg.edit_text("❌ Ovozni aniqlab bo'lmadi. Iltimos, qaytadan yozing yoki matn yuboring.")
             return
 
         chat_key = f"direct_{message.chat.id}"
@@ -450,7 +485,9 @@ async def on_direct_voice(message: Message):
 
 @dp.message(F.text & ~F.text.startswith("/"))
 async def on_direct_text(message: Message, state: FSMContext):
-    # Agar reply kutilayotgan holat bo'lsa
+    if message.from_user and message.from_user.is_bot:
+        return
+
     cur_state = await state.get_state()
     if cur_state == FormStates.waiting_for_reply.state:
         data = await state.get_data()
@@ -491,25 +528,9 @@ async def on_direct_text(message: Message, state: FSMContext):
     bot_data["stats"]["ai_replies"] += 1
     await message.answer(reply)
 
-    # Bildirishnoma (adminlar uchun)
-    targets = get_all_target_admins()
-    if sender.id not in targets:
-        username_str = f"@{sender.username}" if sender.username else f"ID: {sender.id}"
-        notify_text = (
-            "📩 <b>Botga yangi to'g'ridan-to'g'ri xabar keldi:</b>\n\n"
-            f"👤 <b>Foydalanuvchi:</b> {html.escape(sender.full_name)} ({username_str})\n\n"
-            f"💬 <b>Savol:</b>\n<blockquote>{html.escape(message.text)}</blockquote>\n\n"
-            f"🤖 <b>AI javobi:</b>\n<blockquote>{html.escape(reply)}</blockquote>"
-        )
-        for admin_id in targets:
-            try:
-                await bot.send_message(chat_id=admin_id, text=notify_text, parse_mode="HTML")
-            except Exception:
-                pass
-
 
 # ==========================================
-# 3. BUYRUQLAR VA BOSHQARUV (COMMANDS)
+# 3. BUYRUQLAR (COMMANDS)
 # ==========================================
 
 @dp.message(CommandStart())
@@ -524,40 +545,42 @@ async def cmd_start(message: Message):
         set_user_name(user.id, user.first_name)
 
     my_name = get_user_name(user.id, user.first_name)
-    status = get_user_status(user.id)
-    status_badge = "🟢 ONLAYN" if status == "online" else "🔴 OFLAYN (Avtojavob faol)"
-    current_mode = ai_service.get_mode(f"direct_{message.chat.id}")
+    status_str = "🟢 YOQILGAN (Avtojavob beradi)" if is_auto_reply_on() else "🔴 O'CHIRILGAN (Avtojavob to'xtatilgan)"
 
     text = (
         f"👑 <b>Assalomu alaykum, {html.escape(my_name)}!</b>\n\n"
-        f"Men sizning <b>Aqlli Shaxsiy Yordamchingiz va Avtojavob AI Botiman</b>.\n\n"
-        "✨ <b>Yangi Imkoniyatlar:</b>\n"
-        "• 🎙️ <b>Ovozli xabarlar (Voice Notes)</b>: Ovozli xabarlarni avtomatik matnga aylantirib, tushunib javob qaytara olaman.\n"
-        "• 🧠 <b>Kontekst xotirasi</b>: Suhbat jarayonini eslab qolaman.\n"
-        "• 🎭 <b>AI Uslublari</b>: Standart, Biznes, Lo'nda yoki Chuqur tahliliy javob rejimlari.\n"
-        "• ⚡ <b>Telegram Business avtojavob</b>: Profilingizga kelgan har qanday savolga sizning nomingizdan samimiy javob beraman.\n\n"
-        f"👤 <b>Akkaunt / Brend egasi:</b> <b>{html.escape(my_name)}</b>\n"
-        f"⚡ <b>Holatingiz:</b> <b>{status_badge}</b>\n"
-        f"🎭 <b>AI Uslubi:</b> <b>{current_mode.upper()}</b>\n\n"
-        "<i>Quyidagi tugmalar orqali barcha sozlamalarni qulay boshqaring:</i>"
+        f"⚡ <b>Avtojavob holati:</b> <b>{status_str}</b>\n\n"
+        "• <b>O'chirish uchun:</b> <code>/off</code> yoki pastdagi qizil tugmani bosing.\n"
+        "• <b>Yoqish uchun:</b> <code>/on</code> yoki yashil tugmani bosing.\n\n"
+        "<i>Quyidagi tugmalar orqali barcha sozlamalarni boshqaring:</i>"
     )
     await message.answer(text, parse_mode="HTML", reply_markup=get_settings_keyboard(user.id))
 
 
-@dp.message(Command("help"))
-async def cmd_help(message: Message):
-    help_text = (
-        "💡 <b>Bot Buyruqlari va Yo'riqnoma:</b>\n\n"
-        "• /start — Boshqaruv paneli va asosiy menyu\n"
-        "• /status — Server va ulanishlar holatini tekshirish\n"
-        "• /stats — Ishlatilish statistikasi\n"
-        "• /mode — AI javob berish uslubini almashtirish\n"
-        "• /clear yoki /reset — Suhbat xotirasini tozalash\n"
-        "• /setname &lt;Ism&gt; — Akkaunt egasi ismini yangilash\n"
-        "• /prompt — Shaxsiy biznes yo'riqnomasini ko'rish yoki yangilash\n\n"
-        "🎙️ <i>Shuningdek, istalgan vaqtda ovozli xabar yuborishingiz mumkin!</i>"
+@dp.message(Command("off"))
+@dp.message(Command("stop"))
+async def cmd_stop_auto(message: Message):
+    """Avtojavobni butunlay to'xtatish."""
+    set_auto_reply(False)
+    await message.answer(
+        "🛑 <b>AVTOJAVOB TO'LIQ O'CHIRILDI!</b>\n\n"
+        "Bot endi Telegram Business orqali kelgan hech qanday xabarga javob yozmaydi.\n"
+        "Qaytadan yoqish uchun: <code>/on</code> buyrug'ini yuboring.",
+        parse_mode="HTML"
     )
-    await message.answer(help_text, parse_mode="HTML")
+
+
+@dp.message(Command("on"))
+@dp.message(Command("start_bot"))
+async def cmd_start_auto(message: Message):
+    """Avtojavobni yoqish."""
+    set_auto_reply(True)
+    await message.answer(
+        "🟢 <b>AVTOJAVOB YOQILDI!</b>\n\n"
+        "Bot endi mijozlar yozganida AI orqali aqlli javob qaytaradi.\n"
+        "O'chirish uchun: <code>/off</code> buyrug'ini yuboring.",
+        parse_mode="HTML"
+    )
 
 
 @dp.message(Command("clear"))
@@ -565,28 +588,24 @@ async def cmd_help(message: Message):
 async def cmd_clear(message: Message):
     chat_key = f"direct_{message.chat.id}"
     ai_service.clear_history(chat_key)
-    await message.answer("🧹 <b>Suhbat xotirasi tozalandi!</b> Yangi mavzuni boshlashingiz mumkin.", parse_mode="HTML")
+    await message.answer("🧹 <b>Suhbat xotirasi tozalandi!</b>", parse_mode="HTML")
 
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message):
     me = await bot.get_me()
-    user_id = message.from_user.id
     active_count = len(bot_data.get("connections", {}))
-    status = get_user_status(user_id)
-    status_badge = "🟢 ONLAYN" if status == "online" else "🔴 OFLAYN"
-    current_name = get_user_name(user_id, message.from_user.first_name)
+    status_str = "🟢 YOQILGAN" if is_auto_reply_on() else "🔴 O'CHIRILGAN"
     uptime_sec = int(time.time() - START_TIME)
     uptime_str = f"{uptime_sec // 3600}s {(uptime_sec % 3600) // 60}d {uptime_sec % 60}son"
 
     status_text = (
-        f"📊 <b>Bot va Server Holati:</b>\n\n"
-        f"🤖 <b>Bot:</b> @{me.username} ({me.first_name})\n"
-        f"👑 <b>Ega nomi:</b> <b>{html.escape(current_name)}</b>\n"
-        f"⚡ <b>Holat:</b> <b>{status_badge}</b>\n"
-        f"🔗 <b>Telegram Business:</b> <b>{active_count} ta faol ulanish</b>\n"
-        f"⏱ <b>Ish vaqti:</b> <code>{uptime_str}</code>\n"
-        f"🟢 <b>Server:</b> Online (Railway Cloud)"
+        f"📊 <b>Bot Holati:</b>\n\n"
+        f"🤖 Bot: @{me.username}\n"
+        f"⚡ Avtojavob: <b>{status_str}</b>\n"
+        f"🔗 Telegram Business: <b>{active_count} ta ulanish</b>\n"
+        f"⏱ Ish vaqti: <code>{uptime_str}</code>\n"
+        f"🟢 Server: Online"
     )
     await message.answer(status_text, parse_mode="HTML")
 
@@ -595,60 +614,43 @@ async def cmd_status(message: Message):
 async def cmd_stats(message: Message):
     stats = bot_data.get("stats", {})
     text = (
-        "📈 <b>Bot Ish Faoliyati Statistikasi:</b>\n\n"
-        f"📨 Jami qabul qilingan xabarlar: <b>{stats.get('total_messages', 0)} ta</b>\n"
-        f"🤖 AI qaytargan javoblar: <b>{stats.get('ai_replies', 0)} ta</b>\n"
-        f"🎙️ Ovozli xabarlar transkripsiyasi: <b>{stats.get('voice_transcriptions', 0)} ta</b>\n"
-        f"🚨 Aniqlangan muhim mijozlar (Leads): <b>{stats.get('leads_detected', 0)} ta</b>\n"
-        f"🔗 Faol Business akkauntlar: <b>{len(bot_data.get('connections', {}))} ta</b>"
+        "📈 <b>Bot Statistikasi:</b>\n\n"
+        f"📨 Jami xabarlar: <b>{stats.get('total_messages', 0)} ta</b>\n"
+        f"🤖 AI javoblar: <b>{stats.get('ai_replies', 0)} ta</b>\n"
+        f"🎙️ Ovozli xabarlar: <b>{stats.get('voice_transcriptions', 0)} ta</b>\n"
+        f"🚨 Muhim mijozlar: <b>{stats.get('leads_detected', 0)} ta</b>"
     )
     await message.answer(text, parse_mode="HTML")
-
-
-@dp.message(Command("mode"))
-async def cmd_mode(message: Message):
-    chat_key = f"direct_{message.chat.id}"
-    cur_mode = ai_service.get_mode(chat_key)
-    await message.answer(
-        f"🎭 <b>AI Javob Uslubini Tanlang:</b>\n\nJoriy uslub: <b>{cur_mode.upper()}</b>",
-        parse_mode="HTML",
-        reply_markup=get_mode_keyboard()
-    )
 
 
 @dp.message(Command("setname"))
 async def cmd_setname(message: Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.answer("Iltimos, ism kiriting. Masalan:\n<code>/setname Zayniddin</code>", parse_mode="HTML")
+        await message.answer("Masalan: <code>/setname Zayniddin</code>", parse_mode="HTML")
         return
     new_name = args[1].strip()
     set_user_name(message.from_user.id, new_name)
-    await message.answer(f"✅ Akkaunt egasi nomi muvaffaqiyatli saqlandi: <b>{html.escape(new_name)}</b>", parse_mode="HTML")
+    await message.answer(f"✅ Ism saqlandi: <b>{html.escape(new_name)}</b>", parse_mode="HTML")
 
 
 # ==========================================
 # 4. CALLBACK QUERIES
 # ==========================================
 
-@dp.callback_query(F.data.in_(["set_online", "set_offline"]))
-async def cb_toggle_status(call: CallbackQuery):
-    user_id = call.from_user.id
-    new_val = "online" if call.data == "set_online" else "offline"
-    set_user_status(user_id, new_val)
-    await call.message.edit_reply_markup(reply_markup=get_settings_keyboard(user_id))
-    msg = "🟢 Siz ONLAYN holatiga o'tdingiz. Avtojavob to'xtatildi." if new_val == "online" else "🔴 Siz OFLAYN holatiga o'tdingiz. AI avtojavob faol!"
+@dp.callback_query(F.data.in_(["toggle_power_on", "toggle_power_off"]))
+async def cb_toggle_power(call: CallbackQuery):
+    turn_on = call.data == "toggle_power_on"
+    set_auto_reply(turn_on)
+    await call.message.edit_reply_markup(reply_markup=get_settings_keyboard(call.from_user.id))
+    msg = "🟢 Avtojavob YOQILDI! Bot endi javob qaytaradi." if turn_on else "🛑 Avtojavob O'CHIRILDI! Bot endi javob yozmaydi."
     await call.answer(msg, show_alert=True)
 
 
 @dp.callback_query(F.data == "btn_select_mode")
 async def cb_select_mode(call: CallbackQuery):
     await call.message.edit_text(
-        "🎭 <b>AI Javob Uslubini Tanlang:</b>\n\n"
-        "• <b>Standart:</b> Samimiy va tabiiy insondek suhbat.\n"
-        "• <b>Biznes & Savdo:</b> Rasmiy, xushmuomala va mijozni jalb qilishga qaratilgan.\n"
-        "• <b>Qisqa:</b> Faqat lo'nda va eng muhim ma'lumot.\n"
-        "• <b>Chuqur:</b> Barcha tafsilotlarni keng tushuntiruvchi.",
+        "🎭 <b>AI Javob Uslubini Tanlang:</b>",
         parse_mode="HTML",
         reply_markup=get_mode_keyboard()
     )
@@ -660,9 +662,9 @@ async def cb_apply_mode(call: CallbackQuery):
     chosen_mode = call.data.replace("mode_", "")
     chat_key = f"direct_{call.message.chat.id}"
     ai_service.set_mode(chat_key, chosen_mode)
-    await call.answer(f"✅ AI Uslubi o'zgartirildi: {chosen_mode.upper()}", show_alert=True)
+    await call.answer(f"✅ AI Uslubi: {chosen_mode.upper()}", show_alert=True)
     await call.message.edit_text(
-        f"✅ <b>AI Uslubi: {chosen_mode.upper()}</b> ga o'zgartirildi!\nBoshqaruv menyusiga qaytish uchun tugmani bosing.",
+        f"✅ <b>AI Uslubi: {chosen_mode.upper()}</b> ga o'rnatildi!",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="◀️ Bosh Menyu", callback_data="btn_back_settings")]]
@@ -674,12 +676,11 @@ async def cb_apply_mode(call: CallbackQuery):
 async def cb_back_settings(call: CallbackQuery):
     user_id = call.from_user.id
     my_name = get_user_name(user_id, call.from_user.first_name)
-    status = get_user_status(user_id)
-    status_badge = "🟢 ONLAYN" if status == "online" else "🔴 OFLAYN (Avtojavob faol)"
+    status_str = "🟢 YOQILGAN" if is_auto_reply_on() else "🔴 O'CHIRILGAN"
 
     await call.message.edit_text(
         f"👑 <b>Boshqaruv Paneli: {html.escape(my_name)}</b>\n\n"
-        f"⚡ Holat: <b>{status_badge}</b>\n\n"
+        f"⚡ Avtojavob: <b>{status_str}</b>\n\n"
         "Kerakli bo'limni tanlang:",
         parse_mode="HTML",
         reply_markup=get_settings_keyboard(user_id)
@@ -698,12 +699,11 @@ async def cb_clear_history(call: CallbackQuery):
 async def cb_show_stats(call: CallbackQuery):
     stats = bot_data.get("stats", {})
     text = (
-        "📈 <b>Bot Statistikasi:</b>\n\n"
+        "📈 <b>Statistika:</b>\n\n"
         f"📨 Jami xabarlar: <b>{stats.get('total_messages', 0)} ta</b>\n"
         f"🤖 AI javoblar: <b>{stats.get('ai_replies', 0)} ta</b>\n"
-        f"🎙️ Ovozli xabarlar: <b>{stats.get('voice_transcriptions', 0)} ta</b>\n"
-        f"🚨 Muhim mijozlar: <b>{stats.get('leads_detected', 0)} ta</b>\n"
-        f"🔗 Ulanishlar: <b>{len(bot_data.get('connections', {}))} ta</b>"
+        f"🎙️ Ovozli transkripsiyalar: <b>{stats.get('voice_transcriptions', 0)} ta</b>\n"
+        f"🚨 Muhim mijozlar: <b>{stats.get('leads_detected', 0)} ta</b>"
     )
     await call.message.reply(text, parse_mode="HTML")
     await call.answer()
@@ -711,45 +711,14 @@ async def cb_show_stats(call: CallbackQuery):
 
 @dp.callback_query(F.data == "btn_check_status")
 async def cb_check_status(call: CallbackQuery):
-    me = await bot.get_me()
-    uptime_sec = int(time.time() - START_TIME)
-    uptime_str = f"{uptime_sec // 3600}s {(uptime_sec % 3600) // 60}d {uptime_sec % 60}son"
-    text = (
-        f"🟢 <b>Server va Bot Faol:</b>\n\n"
-        f"🤖 Bot: @{me.username}\n"
-        f"⏱ Ish vaqti: <code>{uptime_str}</code>\n"
-        f"🌐 Railway Cloud: Connected"
-    )
+    status_str = "🟢 YOQILGAN" if is_auto_reply_on() else "🔴 O'CHIRILGAN"
+    text = f"⚡ <b>Avtojavob holati:</b> <b>{status_str}</b>\n🟢 Server: Online"
     await call.message.reply(text, parse_mode="HTML")
     await call.answer()
 
 
-@dp.callback_query(F.data.startswith("rep_"))
-async def cb_reply_customer(call: CallbackQuery, state: FSMContext):
-    client_chat_id = call.data.replace("rep_", "")
-    msg_id = call.message.message_id
-    info = notification_map.get(msg_id)
-    if not info:
-        await call.answer("Mijoz ma'lumotlari yangilangan, bevosita profilingiz orqali yozing.", show_alert=True)
-        return
-
-    await state.set_state(FormStates.waiting_for_reply)
-    await state.update_data(
-        conn_id=info["conn_id"],
-        client_chat_id=info["client_chat_id"],
-        client_name=info["client_name"]
-    )
-
-    await call.message.reply(
-        f"✍️ <b>{html.escape(info['client_name'])}</b>ga yuboriladigan xabaringizni yozing:\n\n"
-        "<i>(Ushbu xabar mijozning chatiga bot orqali darhol yetkaziladi)</i>",
-        parse_mode="HTML"
-    )
-    await call.answer()
-
-
 # ==========================================
-# 5. RAILWAY UCHUN HEALTHCHECK HTTP SERVER
+# 5. HEALTHCHECK HTTP SERVER
 # ==========================================
 
 async def healthcheck_handler(request):
@@ -757,9 +726,9 @@ async def healthcheck_handler(request):
     return web.json_response({
         "status": "ok",
         "bot": "AvtoJavob AI",
+        "auto_reply_enabled": is_auto_reply_on(),
         "uptime_seconds": uptime_sec,
-        "connections": len(bot_data.get("connections", {})),
-        "total_messages": bot_data.get("stats", {}).get("total_messages", 0)
+        "connections": len(bot_data.get("connections", {}))
     })
 
 
@@ -783,11 +752,9 @@ async def main():
     logger.info(f"Bot ishga tushdi: @{me.username} ({me.first_name})")
     print(f"\n==========================================")
     print(f"🤖 Bot muvaffaqiyatli ishga tushdi: @{me.username}")
-    print(f"🎙️ Ovozli xabarlar va Whisper AI: FAOL")
-    print(f"⚡ Ko'p funksiyali AI Avtojavob tizimi: TAYYOR")
+    print(f"⚡ Avtojavob holati: {'YOQILGAN 🟢' if is_auto_reply_on() else 'O\'CHIRILGAN 🔴'}")
     print(f"==========================================\n")
 
-    # Railway uchun HTTP healthcheck serverini parallel ishga tushiramiz
     asyncio.create_task(start_http_server())
 
     await bot.delete_webhook(drop_pending_updates=True)
