@@ -1,16 +1,15 @@
-FROM node:20-alpine
+FROM python:3.13-slim
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN npm run build
 
-ENV NODE_ENV=production
-ENV PORT=3000
+EXPOSE 8080
 
-EXPOSE 3000
-
-CMD ["node", "server.js"]
+CMD ["python", "main.py"]
