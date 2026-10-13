@@ -1,31 +1,30 @@
 import React, { useState } from 'react';
-import { Volume2, VolumeX, RotateCcw, BarChart2, Users, Shield } from 'lucide-react';
-import { AIDifficulty, GameMode } from '../types';
+import { Volume2, VolumeX, RotateCcw, ShoppingBag } from 'lucide-react';
+import { UserProfile } from '../types';
+import { AVATARS } from '../utils/shopData';
 
 interface TopBarProps {
+  profile: UserProfile;
   isMuted: boolean;
   onToggleSound: () => void;
   onResetMatch: () => void;
-  difficulty: AIDifficulty;
-  onChangeDifficulty: (diff: AIDifficulty) => void;
-  gameMode: GameMode;
-  onOpenOnlineLobby: () => void;
-  onOpenStats: () => void;
+  onOpenProfile: () => void;
+  onOpenShop: () => void;
   matchInProgress: boolean;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
+  profile,
   isMuted,
   onToggleSound,
   onResetMatch,
-  difficulty,
-  onChangeDifficulty,
-  gameMode,
-  onOpenOnlineLobby,
-  onOpenStats,
+  onOpenProfile,
+  onOpenShop,
   matchInProgress
 }) => {
   const [showConfirmReset, setShowConfirmReset] = useState(false);
+
+  const currentAvatar = AVATARS.find(a => a.id === profile.selectedAvatar) || AVATARS[0];
 
   const handleResetClick = () => {
     if (matchInProgress) {
@@ -41,83 +40,55 @@ export const TopBar: React.FC<TopBarProps> = ({
   };
 
   return (
-    <header className="w-full max-w-4xl mx-auto px-4 pt-3 pb-1 select-none">
+    <header className="w-full max-w-xl mx-auto px-4 pt-3 pb-2 select-none">
       <div className="flex items-center justify-between gap-2">
-        {/* Logo and Title */}
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-500 to-amber-500 p-0.5 shadow-[0_0_15px_rgba(0,229,255,0.4)] flex items-center justify-center">
-            <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-              <span className="text-sm font-black text-cyan-400">HG</span>
-            </div>
+        {/* Left: Player Profile Pill Button */}
+        <button
+          onClick={onOpenProfile}
+          className="flex items-center gap-2 p-1.5 pr-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 transition-all cursor-pointer shadow-md text-left"
+          title="Profilni ko'rish"
+        >
+          <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-400/60 flex items-center justify-center text-xl shadow-[0_0_10px_rgba(0,229,255,0.3)]">
+            {currentAvatar.icon}
           </div>
           <div>
-            <h1 className="text-base sm:text-lg font-black tracking-wider leading-none text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-amber-400">
-              HANDS OF GLORY
-            </h1>
-            <span className="text-[10px] text-slate-400 tracking-widest uppercase font-semibold">
-              3D CYBER ARENA
+            <span className="text-xs font-black text-white block leading-tight">
+              {profile.name}
+            </span>
+            <span className="text-[10px] text-cyan-300 font-semibold">
+              Profil
             </span>
           </div>
-        </div>
+        </button>
 
-        {/* Right Action Buttons */}
+        {/* Center: Coins / Money Pill */}
+        <button
+          onClick={onOpenShop}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs font-black transition-all cursor-pointer shadow-sm hover:scale-105"
+          title="Do'kondan xarid qilish"
+        >
+          <span className="text-sm">🪙</span>
+          <span>{profile.coins} tanga</span>
+        </button>
+
+        {/* Right: Shop, Sound, and Restart */}
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Difficulty Dropdown / Pill (when playing AI) */}
-          {gameMode === 'ai' && (
-            <div className="relative group">
-              <button
-                type="button"
-                className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 text-[11px] font-bold text-slate-300 flex items-center gap-1 shadow-sm transition-all"
-                title="Select AI Difficulty"
-              >
-                <Shield className="w-3.5 h-3.5 text-cyan-400" />
-                <span className="capitalize hidden sm:inline">{difficulty}</span>
-              </button>
-              <div className="absolute right-0 top-full mt-1 hidden group-hover:flex flex-col bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-1 z-50 min-w-[110px]">
-                {(['novice', 'tactical', 'grandmaster'] as AIDifficulty[]).map((d) => (
-                  <button
-                    key={d}
-                    onClick={() => onChangeDifficulty(d)}
-                    className={`px-2.5 py-1 text-left text-xs rounded capitalize font-medium transition-colors ${
-                      difficulty === d
-                        ? 'bg-cyan-500/20 text-cyan-300 font-bold'
-                        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                    }`}
-                  >
-                    {d}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Online Multiplayer Lobby Button */}
+          {/* Shop Button */}
           <button
-            onClick={onOpenOnlineLobby}
-            aria-label="Online Multiplayer"
-            className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900/80 border border-indigo-700/70 text-indigo-300 hover:text-indigo-200 transition-all shadow-[0_0_10px_rgba(99,102,241,0.25)] flex items-center gap-1"
-            title="Online 1v1 Mode"
+            onClick={onOpenShop}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs transition-all shadow-[0_0_15px_rgba(251,191,36,0.35)] cursor-pointer active:scale-95"
+            title="Do'kon: Rasmlar va Qo'llar"
           >
-            <Users className="w-4 h-4 text-indigo-400" />
-            <span className="text-[11px] font-bold hidden md:inline">1v1 Online</span>
-          </button>
-
-          {/* Stats Button */}
-          <button
-            onClick={onOpenStats}
-            aria-label="View Stats"
-            className="p-1.5 sm:p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition-all"
-            title="Statistics & Leaderboard"
-          >
-            <BarChart2 className="w-4 h-4 text-amber-400" />
+            <ShoppingBag className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Do'kon</span>
           </button>
 
           {/* Sound Toggle */}
           <button
             onClick={onToggleSound}
-            aria-label={isMuted ? 'Unmute Sound' : 'Mute Sound'}
-            className="p-1.5 sm:p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition-all"
-            title={isMuted ? 'Unmute Sound' : 'Mute Sound'}
+            aria-label={isMuted ? 'Ovozni yoqish' : 'Ovozni o\'chirish'}
+            className="p-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white transition-all cursor-pointer"
+            title={isMuted ? 'Ovozni yoqish' : 'Ovozni o\'chirish'}
           >
             {isMuted ? (
               <VolumeX className="w-4 h-4 text-red-400" />
@@ -126,38 +97,38 @@ export const TopBar: React.FC<TopBarProps> = ({
             )}
           </button>
 
-          {/* Reset Match Button */}
+          {/* Reset Match */}
           <button
             onClick={handleResetClick}
-            aria-label="Restart Match"
-            className="p-1.5 sm:p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-red-300 transition-all"
-            title="Restart Match"
+            aria-label="O'yinni qayta boshlash"
+            className="p-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-400 hover:text-red-400 transition-all cursor-pointer"
+            title="O'yinni qayta boshlash"
           >
-            <RotateCcw className="w-4 h-4 text-slate-400 hover:text-red-400" />
+            <RotateCcw className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* Confirmation Dialog for Reset if match is ongoing */}
+      {/* Confirmation Dialog for Reset */}
       {showConfirmReset && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 max-w-xs w-full text-center shadow-2xl animate-scale-up">
-            <h3 className="text-base font-extrabold text-white mb-2">Restart Current Match?</h3>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-5 max-w-xs w-full text-center shadow-2xl animate-scale-up">
+            <h3 className="text-base font-extrabold text-white mb-1.5">Matchni qayta boshlaysizmi?</h3>
             <p className="text-xs text-slate-400 mb-4">
-              A match is currently in progress. Resetting will clear the score and round history.
+              Joriy hisob va raundlar tarixi bekor qilinadi.
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => setShowConfirmReset(false)}
-                className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300"
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 cursor-pointer"
               >
-                Cancel
+                Bekor qilish
               </button>
               <button
                 onClick={confirmReset}
-                className="flex-1 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-bold text-white shadow-lg"
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-bold text-white shadow-lg cursor-pointer"
               >
-                Restart
+                Qayta boshlash
               </button>
             </div>
           </div>

@@ -1,6 +1,5 @@
 import React from 'react';
 import { RoundOutcome, HandChoice } from '../types';
-import { getRoundOutcomeDescription } from '../utils/gameLogic';
 
 interface ResultBannerProps {
   outcome: RoundOutcome | null;
@@ -19,50 +18,52 @@ export const ResultBanner: React.FC<ResultBannerProps> = ({
 }) => {
   if (!outcome || isMatchOver) return null;
 
-  const desc = playerChoice && opponentChoice
-    ? getRoundOutcomeDescription(playerChoice, opponentChoice)
-    : '';
+  const choiceNames: Record<HandChoice, string> = {
+    rock: 'Tosh',
+    paper: 'Qog\'oz',
+    scissors: 'Qaychi'
+  };
 
-  let title = 'ROUND WON!';
-  let titleColor = 'text-cyan-300 drop-shadow-[0_0_15px_#00e5ff]';
-  let badgeColor = 'bg-cyan-500/20 border-cyan-400 text-cyan-300';
+  const pName = playerChoice ? choiceNames[playerChoice] : '';
+  const opName = opponentChoice ? choiceNames[opponentChoice] : '';
+
+  let title = 'RAUND G\'ALABASI! 🎉';
+  let titleColor = 'text-cyan-300 drop-shadow-[0_0_12px_#00e5ff]';
+  let badge = 'Siz yutdingiz (+50 tanga 🪙)';
+  let desc = `${pName} ${opName}dan ustun keldi!`;
 
   if (outcome === 'lose') {
-    title = 'ROUND LOST!';
-    titleColor = 'text-amber-400 drop-shadow-[0_0_15px_#ff9100]';
-    badgeColor = 'bg-amber-500/20 border-amber-400 text-amber-300';
+    title = 'RAUND MAG\'LUBIYATI 💥';
+    titleColor = 'text-amber-400 drop-shadow-[0_0_12px_#ff9100]';
+    badge = 'Kompyuter yutdi (+10 tanga 🪙)';
+    desc = `Kompyuterning ${opName}i sizning ${pName}ingizdan ustun keldi.`;
   } else if (outcome === 'draw') {
-    title = 'DRAW!';
-    titleColor = 'text-purple-300 drop-shadow-[0_0_15px_#c084fc]';
-    badgeColor = 'bg-purple-500/20 border-purple-400 text-purple-300';
+    title = 'DURANG! 🤝';
+    titleColor = 'text-purple-300 drop-shadow-[0_0_12px_#c084fc]';
+    badge = 'Ochko berilmadi';
+    desc = `Ikkala tomon ham ${pName} tanladi. Raund qayta o'ynaladi!`;
   }
 
   return (
-    <div className="w-full max-w-md mx-auto px-4 mt-1 mb-2 animate-bounce-short">
-      <div className="relative rounded-2xl bg-slate-900/95 border border-slate-700/80 p-3.5 sm:p-4 text-center shadow-2xl backdrop-blur-md">
-        <div className="inline-block px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border mb-1.5 ${badgeColor}">
-          {outcome === 'draw' ? 'ROUND IMPASSE' : 'ROUND RESOLVED'}
+    <div className="w-full max-w-xl mx-auto px-4 mt-1 mb-2 animate-bounce-short select-none">
+      <div className="relative rounded-2xl bg-slate-900/95 border border-slate-700/80 p-3 sm:p-4 text-center shadow-xl backdrop-blur-md">
+        <div className="inline-block px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700 mb-1.5">
+          {badge}
         </div>
 
-        <h2 className={`text-2xl sm:text-3xl font-black italic tracking-wide mb-1 ${titleColor}`}>
+        <h2 className={`text-xl sm:text-2xl font-black italic tracking-wide mb-1 ${titleColor}`}>
           {title}
         </h2>
 
-        <p className="text-xs sm:text-sm text-slate-300 font-medium mb-3">
+        <p className="text-xs text-slate-300 font-medium mb-3">
           {desc}
         </p>
 
-        {outcome === 'draw' && (
-          <p className="text-[11px] text-amber-300/90 mb-3 bg-amber-500/10 py-1 px-2 rounded-lg border border-amber-500/20">
-            Draw does not award points. You can retry this round slot.
-          </p>
-        )}
-
         <button
           onClick={onNextRound}
-          className="w-full py-2.5 sm:py-3 rounded-xl bg-gradient-to-r from-cyan-500 via-indigo-600 to-amber-500 hover:from-cyan-400 hover:to-amber-400 text-slate-950 font-black text-sm uppercase tracking-wider shadow-[0_0_20px_rgba(0,229,255,0.4)] active:scale-95 transition-all cursor-pointer"
+          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all cursor-pointer"
         >
-          {outcome === 'draw' ? 'RETRY ROUND' : 'NEXT ROUND'} →
+          {outcome === 'draw' ? 'QAYTA O\'YNASH' : 'KEYINGI RAUND'} →
         </button>
       </div>
     </div>
